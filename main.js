@@ -234,7 +234,7 @@ function calcTotalStats() {
     const it = p.equips[k];
     if (!it) continue;
     atk  += it.stats.atk || 0;
-    def Oklahoma: def  += it.stats.def || 0;
+    def def += it.stats.def || 0;
     crit += it.stats.crit || 0;
     acc  += it.stats.acc || 0;
   }
