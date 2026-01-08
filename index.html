@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Mecha RPG - V0.0.1</title>
+  <title>Mecha RPG - V0.0.2</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,11 +11,16 @@
     <div class="brand">
       <div class="title">MECHA RPG</div>
       <div class="sub">
-        <span id="versionText">V0.0.1</span>
+        <span id="versionText">V0.0.2</span>
         <span class="dot">•</span>
         <button id="btnShowChangelog" class="linkbtn">版本更新</button>
       </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="play">作戰</button>
+        <button class="tab" data-tab="shop">商店</button>
+      </div>
     </div>
+
     <div class="actions">
       <button id="btnSave">儲存</button>
       <button id="btnLoad">讀檔</button>
@@ -26,7 +31,7 @@
     </div>
   </header>
 
-  <main class="grid">
+  <main class="grid tabpage" data-tabpage="play">
     <section class="card">
       <h2>機甲狀態</h2>
       <div class="kv">
@@ -68,12 +73,16 @@
           <div>命中</div><div id="acc">90%</div>
         </div>
       </div>
+
+      <div class="hint">
+        小提示：技能耗 MP、EXE爆發需要同步率；打怪/被打都會累積 EXE。
+      </div>
     </section>
 
     <section class="card">
       <h2>裝備</h2>
       <div class="equip-grid" id="equipGrid"></div>
-      <div class="hint">點裝備位可快速裝上背包中同類型最強裝備（V0.0.1 簡化）。</div>
+      <div class="hint">點裝備位：自動裝上背包中同部位最強裝備。</div>
     </section>
 
     <section class="card">
@@ -99,12 +108,31 @@
     </section>
 
     <section class="card">
-      <h2>背包 / 掉寶</h2>
+      <h2>背包</h2>
       <div class="row">
         <button id="btnLootTest">測試掉寶</button>
-        <button id="btnSortBag">整理（按稀有度/強度）</button>
+        <button id="btnSortBag">整理（稀有度/強度）</button>
+        <button id="btnUseBestPotion">自動用最適回復</button>
       </div>
       <div id="bag" class="bag"></div>
+    </section>
+  </main>
+
+  <main class="grid tabpage hidden" data-tabpage="shop">
+    <section class="card">
+      <h2>商店</h2>
+      <div class="hint">你可以購買回復品或基礎裝備箱（會隨等級提升）。</div>
+      <div id="shop" class="shop"></div>
+    </section>
+
+    <section class="card">
+      <h2>快速資訊</h2>
+      <div class="kv">
+        <div>金幣</div><div id="gold2">0</div>
+        <div>目前等級</div><div id="lv2">1</div>
+        <div>存檔版本</div><div id="saveVer">—</div>
+      </div>
+      <div class="hint">建議：先買回復品，打怪後再補。</div>
     </section>
   </main>
 
