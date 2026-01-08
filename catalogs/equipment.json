@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "version": "V0.0.6",
+    "note": "Equipment Data - No EXE, Cohesion for Burst only"
+  },
+  "rules": {
+    "tiers": {
+      "N": { "passives": 0 },
+      "E": { "passives": 1 },
+      "L": { "passives": 2 }
+    }
+  },
+  "items": [
+    {
+      "id": "H_L_007",
+      "slot": "head",
+      "name": "星核觀測頭盔",
+      "tier": "L",
+      "set": "STARCORE",
+      "passives": [
+        { "type": "BURST_COST_REDUCE", "value": 0.1 },
+        { "type": "BURST_DURATION_PLUS", "value": 1 }
+      ]
+    },
+    {
+      "id": "B_E_004",
+      "slot": "body",
+      "name": "星鋼核心裝甲",
+      "tier": "E",
+      "set": "STARCORE",
+      "passives": [
+        { "type": "TAKE_DAMAGE_COH_PLUS", "value": 2 }
+      ]
+    },
+    {
+      "id": "A_L_007",
+      "slot": "arms",
+      "name": "星刃操控臂甲",
+      "tier": "L",
+      "set": "STARCORE",
+      "passives": [
+        { "type": "BURST_ATK_UP", "value": 0.15 },
+        { "type": "BURST_FIRST_HIT_CRIT", "value": true }
+      ]
+    },
+    {
+      "id": "L_L_007",
+      "slot": "legs",
+      "name": "星速推進腿甲",
+      "tier": "L",
+      "set": "STARCORE",
+      "passives": [
+        { "type": "BURST_START_COH_PLUS", "value": 10 },
+        { "type": "ACTION_COH_PLUS", "value": 1 }
+      ]
+    },
+    {
+      "id": "C_L_007",
+      "slot": "acc",
+      "name": "星核共鳴核心",
+      "tier": "L",
+      "set": "STARCORE",
+      "passives": [
+        { "type": "COH_MAX_PLUS", "value": 20 },
+        { "type": "BURST_COOLDOWN_MINUS", "value": 1 }
+      ]
+    }
+  ]
+}

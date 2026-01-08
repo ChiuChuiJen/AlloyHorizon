@@ -1,0 +1,56 @@
+{
+  "meta": {
+    "version": "V0.0.6",
+    "note": "Weapon Data - Dual Wield Enabled, No EXE"
+  },
+  "rules": {
+    "dualWield": true,
+    "allowSameWeapon": true
+  },
+  "items": [
+    {
+      "id": "W_S_L_004",
+      "type": "SWORD",
+      "name": "星核裁決之劍",
+      "tier": "L",
+      "set": "STARCORE",
+      "hand": "ANY",
+      "passives": [
+        { "type": "BURST_ATK_UP", "value": 0.15 },
+        { "type": "BURST_FIRST_HIT_CRIT", "value": true }
+      ]
+    },
+    {
+      "id": "W_S_E_003",
+      "type": "SWORD",
+      "name": "雷紋能量劍",
+      "tier": "E",
+      "hand": "ANY",
+      "passives": [
+        { "type": "NORMAL_HIT_COH_PLUS", "value": 1 }
+      ]
+    },
+    {
+      "id": "W_G_L_008",
+      "type": "GUN",
+      "name": "天穹殲滅炮",
+      "tier": "L",
+      "hand": "ANY",
+      "passives": [
+        { "type": "BURST_DAMAGE_UP", "value": 0.2 },
+        { "type": "BURST_ALWAYS_HIT", "value": true }
+      ]
+    },
+    {
+      "id": "W_H_L_012",
+      "type": "HEAVY",
+      "name": "深淵審判者",
+      "tier": "L",
+      "hand": "ANY",
+      "passives": [
+        { "type": "BURST_IGNORE_DEF", "value": 0.2 },
+        { "type": "KILL_COH_PLUS", "value": 5 }
+      ]
+    }
+  ]
+}

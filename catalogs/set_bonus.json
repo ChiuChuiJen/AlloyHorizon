@@ -1,0 +1,56 @@
+{
+  "STARCORE": {
+    "name": "星核套裝",
+    "pieces": [
+      "星核觀測頭盔",
+      "星鋼核心裝甲",
+      "星刃操控臂甲",
+      "星速推進腿甲",
+      "星核共鳴核心"
+    ],
+    "bonus": {
+      "2": [
+        { "type": "COH_MAX_PLUS", "value": 10 }
+      ],
+      "4": [
+        { "type": "BURST_COST_REDUCE", "value": 0.2 }
+      ]
+    }
+  },
+
+  "DRAGONVEIN": {
+    "name": "龍脈套裝",
+    "pieces": [
+      "龍脈共鳴頭冠",
+      "龍脈防禦戰軀",
+      "龍脈疾行模組"
+    ],
+    "bonus": {
+      "2": [
+        { "type": "BURST_START_COH_PLUS", "value": 10 }
+      ],
+      "4": [
+        { "type": "NEXT_TURN_COH_GAIN_MULTI", "value": 2.0 }
+      ]
+    }
+  },
+
+  "VOID": {
+    "name": "虛空套裝",
+    "pieces": [
+      "虛空鎖定頭具",
+      "虛數矩陣主甲",
+      "次元穩定臂甲",
+      "次元躍遷足具",
+      "次元校準裝置"
+    ],
+    "bonus": {
+      "2": [
+        { "type": "SKILL_HIT_RATE_PLUS", "value": 0.05 }
+      ],
+      "4": [
+        { "type": "BURST_DURATION_PLUS", "value": 2 }
+      ]
+    }
+  }
+}

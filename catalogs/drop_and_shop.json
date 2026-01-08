@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "version": "V0.0.6",
+    "note": "Drop Pool & Shop Rules"
+  },
+
+  "dropRules": {
+    "NORMAL": [
+      { "type": "EQUIPMENT", "tier": "N", "weight": 70 },
+      { "type": "WEAPON", "tier": "N", "weight": 20 },
+      { "type": "EQUIPMENT", "tier": "E", "weight": 10 }
+    ],
+    "ELITE": [
+      { "type": "EQUIPMENT", "tier": "E", "weight": 60 },
+      { "type": "WEAPON", "tier": "E", "weight": 25 },
+      { "type": "EQUIPMENT", "tier": "L", "weight": 15 }
+    ],
+    "BOSS": [
+      { "type": "EQUIPMENT", "tier": "E", "weight": 40 },
+      { "type": "EQUIPMENT", "tier": "L", "weight": 40 },
+      { "type": "WEAPON", "tier": "L", "weight": 20 }
+    ]
+  },
+
+  "shop": {
+    "rules": {
+      "sellLegendary": false,
+      "rotateEveryFloor": 3,
+      "maxEliteItems": 2
+    },
+    "sell": {
+      "equipment": {
+        "N": true,
+        "E": true,
+        "L": false
+      },
+      "weapon": {
+        "N": true,
+        "E": true,
+        "L": false
+      },
+      "consumables": [
+        {
+          "id": "ITEM_REPAIR_BASIC",
+          "name": "基礎修復模組",
+          "effect": "回復 HP 20%"
+        },
+        {
+          "id": "ITEM_COH_STABLE",
+          "name": "同心率穩定器",
+          "effect": "非爆發狀態下，同心率 +10"
+        },
+        {
+          "id": "ITEM_ACTION_ENERGY",
+          "name": "行動能量補給包",
+          "effect": "回復 MP 15"
+        }
+      ]
+    }
+  }
+}
