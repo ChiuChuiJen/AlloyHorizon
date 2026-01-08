@@ -2,8 +2,8 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Mecha RPG - V0.0.2</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Mecha RPG - V0.0.3</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,12 +11,12 @@
     <div class="brand">
       <div class="title">MECHA RPG</div>
       <div class="sub">
-        <span id="versionText">V0.0.2</span>
+        <span id="versionText">V0.0.3</span>
         <span class="dot">•</span>
         <button id="btnShowChangelog" class="linkbtn">版本更新</button>
       </div>
       <div class="tabs">
-        <button class="tab active" data-tab="play">作戰</button>
+        <button class="tab active" data-tab="play">探索</button>
         <button class="tab" data-tab="shop">商店</button>
       </div>
     </div>
@@ -31,110 +31,134 @@
     </div>
   </header>
 
-  <main class="grid tabpage" data-tabpage="play">
-    <section class="card">
-      <h2>機甲狀態</h2>
-      <div class="kv">
-        <div>等級</div><div id="lv">1</div>
-        <div>經驗</div><div><span id="xp">0</span> / <span id="xpNeed">100</span></div>
-        <div>金幣</div><div id="gold">0</div>
-      </div>
+  <div class="container tabpage" data-tabpage="play">
+    <main class="grid">
+      <section class="card">
+        <h2>機甲狀態</h2>
 
-      <div class="bars">
-        <div class="bar">
-          <div class="bar-label">HP <span id="hpText"></span></div>
-          <div class="bar-track"><div id="hpBar" class="bar-fill"></div></div>
-        </div>
-        <div class="bar">
-          <div class="bar-label">MP <span id="mpText"></span></div>
-          <div class="bar-track"><div id="mpBar" class="bar-fill"></div></div>
-        </div>
-        <div class="bar">
-          <div class="bar-label">能量 <span id="enText"></span></div>
-          <div class="bar-track"><div id="enBar" class="bar-fill"></div></div>
-        </div>
-        <div class="bar">
-          <div class="bar-label">同步率(EXE) <span id="exeText"></span></div>
-          <div class="bar-track"><div id="exeBar" class="bar-fill"></div></div>
-        </div>
-      </div>
-
-      <div class="row">
-        <button id="btnRest">維修/休息</button>
-        <button id="btnToggleAuto">自動戰鬥：關</button>
-      </div>
-
-      <div class="stats">
-        <h3>戰鬥屬性（含裝備加成）</h3>
         <div class="kv">
-          <div>攻擊</div><div id="atk">10</div>
-          <div>防禦</div><div id="def">5</div>
-          <div>暴擊率</div><div id="crit">5%</div>
-          <div>命中</div><div id="acc">90%</div>
+          <div>等級</div><div id="lv">1</div>
+          <div>經驗</div><div><span id="xp">0</span> / <span id="xpNeed">100</span></div>
+          <div>金幣</div><div id="gold">0</div>
         </div>
-      </div>
 
-      <div class="hint">
-        小提示：技能耗 MP、EXE爆發需要同步率；打怪/被打都會累積 EXE。
-      </div>
-    </section>
+        <div class="bars">
+          <div class="bar">
+            <div class="bar-label">HP <span id="hpText"></span></div>
+            <div class="bar-track"><div id="hpBar" class="bar-fill"></div></div>
+          </div>
+          <div class="bar">
+            <div class="bar-label">MP <span id="mpText"></span></div>
+            <div class="bar-track"><div id="mpBar" class="bar-fill"></div></div>
+          </div>
+          <div class="bar">
+            <div class="bar-label">能量 <span id="enText"></span></div>
+            <div class="bar-track"><div id="enBar" class="bar-fill"></div></div>
+          </div>
+          <div class="bar">
+            <div class="bar-label">同步率(EXE) <span id="exeText"></span></div>
+            <div class="bar-track"><div id="exeBar" class="bar-fill"></div></div>
+          </div>
+        </div>
 
-    <section class="card">
-      <h2>裝備</h2>
-      <div class="equip-grid" id="equipGrid"></div>
-      <div class="hint">點裝備位：自動裝上背包中同部位最強裝備。</div>
-    </section>
+        <div class="row">
+          <button id="btnRest">維修/休息</button>
+          <button id="btnToggleAuto">自動戰鬥：關</button>
+        </div>
 
-    <section class="card">
-      <h2>戰鬥</h2>
-      <div class="enemy">
-        <div class="enemy-name" id="enemyName">—</div>
+        <div class="stats">
+          <h3>戰鬥屬性（含裝備加成）</h3>
+          <div class="kv">
+            <div>攻擊</div><div id="atk">10</div>
+            <div>防禦</div><div id="def">5</div>
+            <div>暴擊率</div><div id="crit">5%</div>
+            <div>命中</div><div id="acc">90%</div>
+          </div>
+        </div>
+
+        <div class="hint">
+          探索提示：每層會遇到一般怪/菁英/Mini Boss/Boss。Boss 掉落更好。
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>探索進度</h2>
+
         <div class="kv">
-          <div>等級</div><div id="enemyLv">—</div>
-          <div>HP</div><div id="enemyHpText">—</div>
+          <div>樓層</div><div><span id="floor">1</span> / 10</div>
+          <div>本層進度</div><div id="floorProgress">—</div>
+          <div>下一個遭遇</div><div id="nextEncounter">—</div>
         </div>
-        <div class="bar-track"><div id="enemyHpBar" class="bar-fill"></div></div>
-      </div>
 
-      <div class="row">
-        <button id="btnSpawn">遭遇敵人</button>
-        <button id="btnAttack">攻擊</button>
-        <button id="btnSkill">技能（耗 MP）</button>
-        <button id="btnExe">EXE 爆發（需同步率）</button>
-      </div>
+        <div class="row">
+          <button id="btnExplore">探索下一場</button>
+          <button id="btnChallengeBoss">挑戰 Boss</button>
+          <button id="btnNextFloor">前往下一層</button>
+          <button id="btnResetTower" class="danger">回到第1層</button>
+        </div>
 
-      <h3>戰鬥紀錄</h3>
-      <div class="log" id="log"></div>
-    </section>
+        <div class="hint">
+          規則：清完本層（含 Boss）才能前往下一層。若你想刷裝備，可回到第1層重爬。
+        </div>
 
-    <section class="card">
-      <h2>背包</h2>
-      <div class="row">
-        <button id="btnLootTest">測試掉寶</button>
-        <button id="btnSortBag">整理（稀有度/強度）</button>
-        <button id="btnUseBestPotion">自動用最適回復</button>
-      </div>
-      <div id="bag" class="bag"></div>
-    </section>
-  </main>
+        <h2 style="margin-top:14px;">裝備</h2>
+        <div class="equip-grid" id="equipGrid"></div>
+        <div class="hint">點裝備位：自動裝上背包中同部位最強裝備。</div>
+      </section>
 
-  <main class="grid tabpage hidden" data-tabpage="shop">
-    <section class="card">
-      <h2>商店</h2>
-      <div class="hint">你可以購買回復品或基礎裝備箱（會隨等級提升）。</div>
-      <div id="shop" class="shop"></div>
-    </section>
+      <section class="card">
+        <h2>戰鬥</h2>
+        <div class="enemy">
+          <div class="enemy-name" id="enemyName">—</div>
+          <div class="kv">
+            <div>等級</div><div id="enemyLv">—</div>
+            <div>HP</div><div id="enemyHpText">—</div>
+          </div>
+          <div class="bar-track"><div id="enemyHpBar" class="bar-fill"></div></div>
+        </div>
 
-    <section class="card">
-      <h2>快速資訊</h2>
-      <div class="kv">
-        <div>金幣</div><div id="gold2">0</div>
-        <div>目前等級</div><div id="lv2">1</div>
-        <div>存檔版本</div><div id="saveVer">—</div>
-      </div>
-      <div class="hint">建議：先買回復品，打怪後再補。</div>
-    </section>
-  </main>
+        <div class="row">
+          <button id="btnAttack">攻擊</button>
+          <button id="btnSkill">技能（耗 MP）</button>
+          <button id="btnExe">EXE 爆發（需同步率）</button>
+        </div>
+
+        <h3>戰鬥紀錄</h3>
+        <div class="log" id="log"></div>
+      </section>
+
+      <section class="card">
+        <h2>背包</h2>
+        <div class="row">
+          <button id="btnLootTest">測試掉寶</button>
+          <button id="btnSortBag">整理（稀有度/強度）</button>
+          <button id="btnUseBestPotion">自動用最適回復</button>
+        </div>
+        <div id="bag" class="bag"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="container tabpage hidden" data-tabpage="shop">
+    <main class="grid">
+      <section class="card">
+        <h2>商店</h2>
+        <div class="hint">回復品能讓你更穩定推層；裝備箱適合缺裝備時補洞。</div>
+        <div id="shop" class="shop"></div>
+      </section>
+
+      <section class="card">
+        <h2>快速資訊</h2>
+        <div class="kv">
+          <div>金幣</div><div id="gold2">0</div>
+          <div>目前等級</div><div id="lv2">1</div>
+          <div>目前樓層</div><div id="floor2">1</div>
+          <div>存檔版本</div><div id="saveVer">—</div>
+        </div>
+        <div class="hint">建議：推Boss前先補HP/MP/能量。</div>
+      </section>
+    </main>
+  </div>
 
   <!-- Changelog Modal -->
   <dialog id="changelogModal" class="modal">
