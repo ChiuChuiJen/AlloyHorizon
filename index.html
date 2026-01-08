@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Mecha RPG - V0.0.5</title>
+  <title>Mecha RPG - V0.0.6</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
     <div class="brand">
       <div class="title">MECHA RPG</div>
       <div class="sub">
-        <span id="versionText">V0.0.5</span>
+        <span id="versionText">V0.0.6</span>
         <span class="dot">•</span>
         <button id="btnShowChangelog" class="linkbtn">版本更新</button>
       </div>
@@ -32,7 +32,7 @@
 
   <div class="container tabpage" data-tabpage="play">
     <main class="grid">
-      <!-- 左上：狀態 -->
+      <!-- 狀態 -->
       <section class="card">
         <h2>機甲狀態</h2>
 
@@ -40,6 +40,7 @@
           <div>等級</div><div id="lv">1</div>
           <div>EXE（升級值）</div><div><span id="exeLvVal">0</span> / <span id="exeLvNeed">100</span></div>
           <div>金幣</div><div id="gold">0</div>
+          <div>爆發狀態</div><div id="burstState">—</div>
         </div>
 
         <div class="bars">
@@ -77,11 +78,11 @@
         </div>
 
         <div class="hint">
-          EXE 現在是「升級專用」；同心率用於「爆發」。
+          ✅ 同心率 = 機體爆發資源　｜　✅ EXE = 升級經驗條（只用來升級）
         </div>
       </section>
 
-      <!-- 右上：探索進度 -->
+      <!-- 探索 -->
       <section class="card">
         <h2>探索進度</h2>
 
@@ -89,6 +90,12 @@
           <div>樓層</div><div><span id="floor">1</span> / 10</div>
           <div>本層進度</div><div id="floorProgress">—</div>
           <div>下一個遭遇</div><div id="nextEncounter">—</div>
+        </div>
+
+        <!-- ✅ 地圖進度條 -->
+        <div class="mapbar">
+          <div class="bar-label">地圖進度 <span id="mapText">0%</span></div>
+          <div class="bar-track"><div id="mapBar" class="bar-fill map"></div></div>
         </div>
 
         <div class="row">
@@ -99,11 +106,11 @@
         </div>
 
         <div class="hint">
-          清完本層（含 Boss）才能前往下一層。
+          ✅ 新增探索事件：補給/陷阱/伏擊/同心共鳴/偶遇商販（隨機）。
         </div>
       </section>
 
-      <!-- ✅ 右下：裝備/戰鬥/背包 同一排分頁 -->
+      <!-- 裝備/戰鬥/背包 -->
       <section class="card span2">
         <div class="subtabs">
           <button class="subtab active" data-subtab="equip">裝備</button>
@@ -111,14 +118,12 @@
           <button class="subtab" data-subtab="bag">背包</button>
         </div>
 
-        <!-- 裝備 -->
         <div class="subpage" data-subpage="equip">
           <h2 style="margin-top:10px;">裝備</h2>
           <div class="equip-grid" id="equipGrid"></div>
-          <div class="hint">點裝備位：自動裝上背包中同部位最強；也可按「卸下」。</div>
+          <div class="hint">點裝備位可「裝最強」。卸下會回到背包。</div>
         </div>
 
-        <!-- 戰鬥 -->
         <div class="subpage hidden" data-subpage="battle">
           <h2 style="margin-top:10px;">戰鬥</h2>
           <div class="enemy">
@@ -140,14 +145,14 @@
           <div class="log" id="log"></div>
         </div>
 
-        <!-- 背包 -->
         <div class="subpage hidden" data-subpage="bag">
           <h2 style="margin-top:10px;">背包</h2>
           <div class="row">
             <button id="btnLootTest">測試掉寶</button>
-            <button id="btnSortBag">整理（稀有度/強度）</button>
+            <button id="btnSortBag">整理（稀有度/強度/強化）</button>
             <button id="btnUseBestPotion">自動用最適回復</button>
           </div>
+          <div class="hint">✅ 裝備新增：詞綴、強化、分解（回收零件）。</div>
           <div id="bag" class="bag"></div>
         </div>
       </section>
@@ -159,7 +164,7 @@
     <main class="grid">
       <section class="card">
         <h2>商店</h2>
-        <div class="hint">回復品能讓你更穩定推層；裝備箱適合缺裝備時補洞。</div>
+        <div class="hint">回復品、裝備箱、強化用零件都能買。</div>
         <div id="shop" class="shop"></div>
       </section>
 
@@ -169,13 +174,14 @@
           <div>金幣</div><div id="gold2">0</div>
           <div>目前等級</div><div id="lv2">1</div>
           <div>目前樓層</div><div id="floor2">1</div>
+          <div>零件</div><div id="scrap2">0</div>
           <div>存檔版本</div><div id="saveVer">—</div>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- Settings Modal (⚙️) -->
+  <!-- Settings Modal -->
   <dialog id="settingsModal" class="modal">
     <div class="modal-head">
       <div class="modal-title">設定 / 存檔</div>
@@ -222,11 +228,9 @@
       </div>
       <div class="hint">匯入會覆蓋目前進度。建議先匯出備份。</div>
     </div>
-    <script src="//cdn.jsdelivr.net/npm/eruda"></script>
-<script>eruda.init()</script>
-
   </dialog>
 
-  <script src="main.js"></script>
+  <!-- ✅ 方法一：query string 避免快取 -->
+  <script src="main.js?v=0.0.6"></script>
 </body>
 </html>
