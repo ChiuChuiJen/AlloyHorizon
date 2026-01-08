@@ -1,23 +1,29 @@
 // =====================
-// Mecha RPG V0.0.1
+// Mecha RPG V0.0.2 (Playable)
 // =====================
 
-// ---- Versioning ----
-const VERSION = "V0.0.1";
+const VERSION = "V0.0.2";
 
-// 版本遞增規則：VMAJOR.MINOR.PATCH；PATCH 0~9，超過進位到 MINOR
+// V0.0.9 -> V0.1.0 規則（PATCH 0~9，超過進位 MINOR）
 function bumpVersion(ver) {
-  // accepts "V0.0.9" or "0.0.9"
   const v = ver.startsWith("V") ? ver.slice(1) : ver;
   const [maj, min, pat] = v.split(".").map(n => Number(n));
   let M = maj, m = min, p = pat + 1;
   if (p >= 10) { p = 0; m += 1; }
-  // 你若未來要 m>=10 進位到 M，也可加：if (m>=10){m=0;M+=1;}
   return `V${M}.${m}.${p}`;
 }
 
 // ---- Changelog ----
 const CHANGELOG = [
+  {
+    version: "V0.0.2",
+    date: "2026-01-08",
+    notes: [
+      "補齊可玩循環：掉寶、消耗品使用、商店、裝備影響最大值",
+      "背包物品增加「使用/裝備/丟棄」，裝備欄可一鍵換最強",
+      "新增分頁：作戰/商店；介面同步顯示金幣/等級/存檔版本"
+    ]
+  },
   {
     version: "V0.0.1",
     date: "2026-01-08",
@@ -27,10 +33,8 @@ const CHANGELOG = [
       "加入存檔/讀檔、JSON/Base64 匯入匯出、版本更新視窗（近三筆）"
     ]
   }
-  // 之後更新就往這裡 push 新物件；版本號可用 bumpVersion(前一版)
 ];
 
-// ---- Game Data ----
 const EQUIP_SLOTS = [
   { key: "head", label: "頭" },
   { key: "body", label: "身體" },
@@ -43,12 +47,17 @@ const EQUIP_SLOTS = [
 ];
 
 const RARITY = [
-  { key: "N",  name: "一般",   mult: 1.0 },
-  { key: "R",  name: "稀有",   mult: 1.25 },
-  { key: "SR", name: "超稀有", mult: 1.55 },
-  { key: "UR", name: "究極",   mult: 1.95 },
+  { key: "N",  name: "一般",   mult: 1.0,  color: "" },
+  { key: "R",  name: "稀有",   mult: 1.25, color: "" },
+  { key: "SR", name: "超稀有", mult: 1.55, color: "" },
+  { key: "UR", name: "究極",   mult: 1.95, color: "" },
 ];
 
+const LS_KEY = "mecha_rpg_save";
+
+// ---------------------
+// State
+// ---------------------
 function newGameState() {
   return {
     meta: {
@@ -59,19 +68,18 @@ function newGameState() {
     player: {
       lv: 1,
       xp: 0,
-      gold: 0,
-      // base stats
+      gold: 120,
       base: { atk: 10, def: 5, crit: 0.05, acc: 0.90 },
-      // resources
       hp: 120, hpMax: 120,
       mp: 40,  mpMax: 40,
       en: 50,  enMax: 50,
       exe: 0,  exeMax: 100,
-      equips: {
-        head: null, body: null, lhand: null, rhand: null, legs: null,
-        acc1: null, acc2: null, acc3: null,
-      },
-      bag: [], // items
+      equips: Object.fromEntries(EQUIP_SLOTS.map(s => [s.key, null])),
+      bag: [
+        mkConsumable("小型修復包", "heal_hp", 45, 35),
+        mkConsumable("能量電池", "heal_en", 30, 28),
+        mkConsumable("資料注入針", "gain_exe", 15, 25),
+      ],
     },
     battle: {
       enemy: null,
@@ -82,10 +90,31 @@ function newGameState() {
 }
 
 let S = loadOrInit();
+migrateIfNeeded();
 
-// ---- Storage ----
-const LS_KEY = "mecha_rpg_save_v001";
+// ---------------------
+// Migration / Compatibility
+// ---------------------
+function migrateIfNeeded() {
+  // 舊存檔欄位補齊
+  if (!S.meta) S.meta = { version: VERSION, createdAt: Date.now(), updatedAt: Date.now() };
+  if (!S.meta.version) S.meta.version = VERSION;
 
+  if (!S.player) S.player = newGameState().player;
+  if (!S.player.equips) S.player.equips = Object.fromEntries(EQUIP_SLOTS.map(s => [s.key, null]));
+  for (const s of EQUIP_SLOTS) {
+    if (!(s.key in S.player.equips)) S.player.equips[s.key] = null;
+  }
+  if (!Array.isArray(S.player.bag)) S.player.bag = [];
+  if (!S.battle) S.battle = newGameState().battle;
+
+  // 立刻套用裝備最大值修正
+  applyDerivedMax();
+}
+
+// ---------------------
+// Save/Load
+// ---------------------
 function saveLocal() {
   S.meta.updatedAt = Date.now();
   localStorage.setItem(LS_KEY, JSON.stringify(S));
@@ -96,8 +125,8 @@ function loadLocal() {
   const raw = localStorage.getItem(LS_KEY);
   if (!raw) return false;
   try {
-    const obj = JSON.parse(raw);
-    S = obj;
+    S = JSON.parse(raw);
+    migrateIfNeeded();
     toast("已讀取存檔");
     return true;
   } catch {
@@ -106,11 +135,18 @@ function loadLocal() {
 }
 
 function loadOrInit() {
-  const ok = loadLocal();
-  return ok ? S : newGameState();
+  const raw = localStorage.getItem(LS_KEY);
+  if (!raw) return newGameState();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return newGameState();
+  }
 }
 
-// ---- Export/Import ----
+// ---------------------
+// Export/Import
+// ---------------------
 function exportJSON() {
   const json = JSON.stringify(S);
   copyToClipboard(json);
@@ -128,67 +164,103 @@ function importFromText(text) {
   const t = (text || "").trim();
   if (!t) throw new Error("空內容");
 
-  // Try JSON first
-  if (t.startsWith("{") || t.startsWith("[")) {
-    const obj = JSON.parse(t);
-    return obj;
-  }
+  if (t.startsWith("{") || t.startsWith("[")) return JSON.parse(t);
 
-  // Try Base64 -> JSON
   const json = decodeURIComponent(escape(atob(t)));
-  const obj = JSON.parse(json);
-  return obj;
+  return JSON.parse(json);
 }
 
-// ---- Mechanics ----
+// ---------------------
+// Mechanics
+// ---------------------
 function xpNeed(lv) {
-  // V0.0.1 簡單曲線：每級需求稍微上升
-  return Math.floor(100 + (lv - 1) * 60);
+  // 可玩曲線：越高越難
+  return Math.floor(120 + (lv - 1) * 70 + Math.pow(lv - 1, 1.35) * 25);
 }
 
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
+function applyDerivedMax() {
+  // 裝備可加最大值（hpMax/mpMax/enMax）
+  const p = S.player;
+  let hpBonus = 0, mpBonus = 0, enBonus = 0;
+
+  for (const k of Object.keys(p.equips)) {
+    const it = p.equips[k];
+    if (!it || it.type !== "equip") continue;
+    hpBonus += it.stats.hpMax || 0;
+    mpBonus += it.stats.mpMax || 0;
+    enBonus += it.stats.enMax || 0;
+  }
+
+  const baseHp = 120 + (p.lv - 1) * 20;
+  const baseMp = 40 + (p.lv - 1) * 6;
+  const baseEn = 50 + (p.lv - 1) * 6;
+
+  p.hpMax = Math.max(1, Math.floor(baseHp + hpBonus));
+  p.mpMax = Math.max(1, Math.floor(baseMp + mpBonus));
+  p.enMax = Math.max(1, Math.floor(baseEn + enBonus));
+
+  p.hp = clamp(p.hp, 0, p.hpMax);
+  p.mp = clamp(p.mp, 0, p.mpMax);
+  p.en = clamp(p.en, 0, p.enMax);
+  p.exe = clamp(p.exe, 0, p.exeMax);
+}
+
 function calcTotalStats() {
   const p = S.player;
-  let atk = p.base.atk, def = p.base.def, crit = p.base.crit, acc = p.base.acc;
+  let atk = p.base.atk + (p.lv - 1) * 3;
+  let def = p.base.def + (p.lv - 1) * 2;
+  let crit = p.base.crit;
+  let acc  = p.base.acc;
 
   for (const k of Object.keys(p.equips)) {
     const it = p.equips[k];
     if (!it) continue;
-    atk += it.stats.atk || 0;
-    def += it.stats.def || 0;
+    atk  += it.stats.atk || 0;
+    def  += it.stats.def || 0;
     crit += it.stats.crit || 0;
-    acc += it.stats.acc || 0;
+    acc  += it.stats.acc || 0;
   }
 
-  // 同步率(EXE) 可做微幅增益（示例）
-  const exeBonus = (p.exe / 100) * 0.08; // +0~8% atk
+  // EXE 加成（小幅）
+  const exeBonus = (p.exe / 100) * 0.10; // +0~10% atk
   atk = Math.floor(atk * (1 + exeBonus));
+
+  crit = clamp(crit, 0, 0.40);
+  acc  = clamp(acc, 0.65, 0.99);
 
   return { atk, def, crit, acc };
 }
 
 function rest() {
   const p = S.player;
-  // 休息回復：HP/MP/能量（示例），EXE 小幅下降
-  p.hp = clamp(p.hp + 35, 0, p.hpMax);
-  p.mp = clamp(p.mp + 18, 0, p.mpMax);
-  p.en = clamp(p.en + 20, 0, p.enMax);
+  applyDerivedMax();
+  p.hp = clamp(p.hp + Math.floor(p.hpMax * 0.25), 0, p.hpMax);
+  p.mp = clamp(p.mp + Math.floor(p.mpMax * 0.35), 0, p.mpMax);
+  p.en = clamp(p.en + Math.floor(p.enMax * 0.35), 0, p.enMax);
   p.exe = clamp(p.exe - 5, 0, p.exeMax);
-  log(`維修完成：HP/MP/能量回復，EXE略降`);
+  log(`維修完成：HP/MP/能量回復（不超過最大值），EXE略降`);
 }
 
 function spawnEnemy() {
   const p = S.player;
-  const lv = clamp(p.lv + randInt(-1, +2), 1, 999);
-  const hpMax = Math.floor(80 + lv * 45);
+  const lv = clamp(p.lv + randInt(-1, +3), 1, 999);
+  const hpMax = Math.floor(90 + lv * 48);
+  const type = pick([
+    { name:"偵察型無人機",   atkK: 7.8, defK: 4.6 },
+    { name:"破城者機甲",     atkK: 8.6, defK: 5.8 },
+    { name:"沙漠獵犬",       atkK: 8.2, defK: 5.0 },
+    { name:"深海鋼鰭",       atkK: 8.8, defK: 5.2 },
+    { name:"失控核心體",     atkK: 9.2, defK: 6.2 },
+  ]);
   S.battle.enemy = {
-    name: pick(["偵察型無人機", "破城者機甲", "沙漠獵犬", "深海鋼鰭", "失控核心體"]),
+    name: type.name,
     lv,
     hp: hpMax,
     hpMax,
-    atk: Math.floor(8 + lv * 8),
-    def: Math.floor(3 + lv * 5),
+    atk: Math.floor(6 + lv * type.atkK),
+    def: Math.floor(2 + lv * type.defK),
   };
   log(`遭遇敵人：${S.battle.enemy.name} Lv.${lv}`);
 }
@@ -198,7 +270,19 @@ function attack(kind="basic") {
   const e = S.battle.enemy;
   if (!e) { toast("沒有敵人，先點『遭遇敵人』"); return; }
 
+  applyDerivedMax();
   const st = calcTotalStats();
+
+  // costs
+  if (kind === "skill") {
+    if (p.mp < 12) { toast("MP 不足"); return; }
+    p.mp -= 12;
+  }
+  if (kind === "exe") {
+    if (p.exe < 30) { toast("同步率不足（需 30）"); return; }
+    p.exe -= 30;
+  }
+
   const hit = Math.random() < st.acc;
   if (!hit) {
     log("你的攻擊落空！");
@@ -207,31 +291,23 @@ function attack(kind="basic") {
   }
 
   let mult = 1.0;
-  if (kind === "skill") mult = 1.35;
-  if (kind === "exe") mult = 2.10;
-
-  // cost
-  if (kind === "skill") {
-    if (p.mp < 10) { toast("MP 不足"); return; }
-    p.mp -= 10;
-    p.exe = clamp(p.exe + 6, 0, p.exeMax);
-  }
-  if (kind === "exe") {
-    if (p.exe < 30) { toast("同步率不足（需 30）"); return; }
-    p.exe -= 30;
-    p.en = clamp(p.en + 10, 0, p.enMax); // 爆發回能（示例）
-  }
+  if (kind === "skill") mult = 1.40;
+  if (kind === "exe")   mult = 2.15;
 
   // crit
   const isCrit = Math.random() < st.crit;
-  const critMult = isCrit ? 1.6 : 1.0;
+  const critMult = isCrit ? 1.65 : 1.0;
 
   const raw = Math.floor(st.atk * mult * critMult);
   const dmg = Math.max(1, raw - e.def);
 
   e.hp = clamp(e.hp - dmg, 0, e.hpMax);
-  p.en = clamp(p.en + 3, 0, p.enMax);
-  p.exe = clamp(p.exe + 2, 0, p.exeMax);
+
+  // resource flows
+  p.en  = clamp(p.en + 3, 0, p.enMax);
+  p.exe = clamp(p.exe + (kind==="exe" ? 0 : 3), 0, p.exeMax);
+  if (kind === "skill") p.exe = clamp(p.exe + 5, 0, p.exeMax);
+  if (kind === "exe")   p.en  = clamp(p.en + 10, 0, p.enMax);
 
   log(`你使用${kindName(kind)}造成 ${dmg} 傷害${isCrit ? "（暴擊）" : ""}！`);
 
@@ -247,20 +323,21 @@ function enemyTurn() {
   const e = S.battle.enemy;
   if (!e) return;
 
+  applyDerivedMax();
   const st = calcTotalStats();
+
   const raw = Math.floor(e.atk * (0.9 + Math.random() * 0.3));
   const dmg = Math.max(1, raw - st.def);
 
-  p.hp = clamp(p.hp - dmg, 0, p.hpMax);
-  p.exe = clamp(p.exe + 3, 0, p.exeMax);
+  p.hp  = clamp(p.hp - dmg, 0, p.hpMax);
+  p.exe = clamp(p.exe + 4, 0, p.exeMax);
 
   log(`敵人反擊，造成你 ${dmg} 傷害。`);
 
   if (p.hp <= 0) {
     log("⚠️ 你的機甲被擊破！已自動維修到 30% HP。");
     p.hp = Math.max(1, Math.floor(p.hpMax * 0.30));
-    // 失敗懲罰示例
-    p.gold = Math.max(0, p.gold - 20);
+    p.gold = Math.max(0, p.gold - 25);
     p.exe = 0;
     S.battle.enemy = null;
   }
@@ -270,8 +347,8 @@ function winBattle() {
   const p = S.player;
   const e = S.battle.enemy;
 
-  const gainXP = Math.floor(40 + e.lv * 25);
-  const gainGold = Math.floor(10 + e.lv * 8);
+  const gainXP   = Math.floor(55 + e.lv * 28);
+  const gainGold = Math.floor(15 + e.lv * 9);
 
   p.xp += gainXP;
   p.gold += gainGold;
@@ -279,14 +356,17 @@ function winBattle() {
 
   log(`✅ 擊敗 ${e.name}！獲得 EXP+${gainXP}、金幣+${gainGold}、EXE+10`);
 
-  // loot
   const drops = rollLoot(e.lv);
   for (const it of drops) p.bag.push(it);
+
   if (drops.length) log(`🎁 掉落：${drops.map(x => x.name).join("、")}`);
   else log("掉落：無");
 
   S.battle.enemy = null;
   levelUpIfNeeded();
+
+  // 自動存檔（防止玩家忘記）
+  saveLocal();
 }
 
 function levelUpIfNeeded() {
@@ -295,36 +375,59 @@ function levelUpIfNeeded() {
   while (p.xp >= need) {
     p.xp -= need;
     p.lv += 1;
-
-    // 成長（示例）
-    p.hpMax += 20; p.hp = p.hpMax;
-    p.mpMax += 6;  p.mp = p.mpMax;
-    p.enMax += 6;  p.en = p.enMax;
-    p.base.atk += 3;
-    p.base.def += 2;
-    p.base.crit = clamp(p.base.crit + 0.003, 0, 0.30);
-    p.base.acc = clamp(p.base.acc + 0.002, 0.60, 0.98);
-
+    applyDerivedMax();
+    // 升級全滿
+    p.hp = p.hpMax;
+    p.mp = p.mpMax;
+    p.en = p.enMax;
     log(`⬆️ 升級！目前 Lv.${p.lv}`);
     need = xpNeed(p.lv);
   }
 }
 
+// ---------------------
+// Loot & Items
+// ---------------------
 function rollLoot(enemyLv) {
-  // V0.0.1：簡單掉落：0~2 件
-  const count = Math.random() < 0.35 ? 0 : (Math.random() < 0.6 ? 1 : 2);
   const out = [];
-  for (let i=0;i<count;i++) out.push(genEquip(enemyLv));
+  // 裝備：60% 1件，12% 2件
+  const roll = Math.random();
+  const equipCount = roll < 0.12 ? 2 : (roll < 0.72 ? 1 : 0);
+  for (let i=0;i<equipCount;i++) out.push(genEquip(enemyLv));
+
+  // 消耗品：35%
+  if (Math.random() < 0.35) out.push(genConsumable(enemyLv));
   return out;
 }
 
-function genEquip(lv) {
-  const slot = pick(EQUIP_SLOTS.filter(s => !s.key.startsWith("acc")).concat(
-    pick([ {key:"acc1",label:"配件1"},{key:"acc2",label:"配件2"},{key:"acc3",label:"配件3"} ])
-  ));
+function genConsumable(lv) {
+  const t = pick([
+    { name:"小型修復包", kind:"heal_hp", base: 40, costK: 35 },
+    { name:"中型修復包", kind:"heal_hp", base: 85, costK: 80 },
+    { name:"MP 注入劑", kind:"heal_mp", base: 30, costK: 45 },
+    { name:"能量電池", kind:"heal_en", base: 30, costK: 28 },
+    { name:"資料注入針", kind:"gain_exe", base: 15, costK: 25 },
+  ]);
+  const amount = Math.floor(t.base + lv * (t.kind==="heal_hp" ? 5 : 3));
+  const price  = Math.floor(t.costK + lv * 4);
+  return mkConsumable(t.name, t.kind, amount, price);
+}
 
+function mkConsumable(name, kind, amount, price) {
+  return {
+    id: cryptoId(),
+    type: "consumable",
+    name,
+    kind,     // heal_hp / heal_mp / heal_en / gain_exe
+    amount,
+    price,
+  };
+}
+
+function genEquip(lv) {
+  const slot = pick(EQUIP_SLOTS);
   const r = rollRarity();
-  const power = Math.max(1, Math.floor((lv * 2 + randInt(0, lv+3)) * r.mult));
+  const power = Math.max(1, Math.floor((lv * 2 + randInt(0, lv+4)) * r.mult));
 
   const stats = baseStatsBySlot(slot.key, power);
 
@@ -340,63 +443,192 @@ function genEquip(lv) {
 }
 
 function baseStatsBySlot(slotKey, power){
-  // V0.0.1：示例規則
-  const s = { atk:0, def:0, crit:0, acc:0 };
+  // 讓裝備「可玩」：攻防 + 少量最大值 + 少量暴擊命中
+  const s = { atk:0, def:0, crit:0, acc:0, hpMax:0, mpMax:0, enMax:0 };
+
+  const small = (x)=> Math.max(0, Math.floor(x));
+  const tinyP = power / 6000;
+
   if (slotKey === "lhand" || slotKey === "rhand") {
-    s.atk = Math.floor(power * 1.2);
-    if (Math.random() < 0.35) s.crit = round2((power/3000));
+    s.atk = Math.floor(power * 1.25);
+    if (Math.random() < 0.35) s.crit = round4(tinyP * 1.6);
   } else if (slotKey === "head") {
-    s.def = Math.floor(power * 0.8);
-    s.acc = round2((power/4000));
-  } else if (slotKey === "body" || slotKey === "legs") {
-    s.def = Math.floor(power * 1.15);
+    s.def = Math.floor(power * 0.85);
+    if (Math.random() < 0.35) s.acc = round4(tinyP * 1.4);
+    s.mpMax = small(power * 0.10);
+  } else if (slotKey === "body") {
+    s.def = Math.floor(power * 1.20);
+    s.hpMax = small(power * 0.20);
+  } else if (slotKey === "legs") {
+    s.def = Math.floor(power * 1.10);
+    s.enMax = small(power * 0.12);
   } else {
     // accessories
-    if (Math.random() < 0.5) s.atk = Math.floor(power * 0.7);
-    else s.def = Math.floor(power * 0.7);
-    if (Math.random() < 0.25) s.crit = round2((power/3500));
+    if (Math.random() < 0.5) s.atk = Math.floor(power * 0.65);
+    else s.def = Math.floor(power * 0.65);
+    if (Math.random() < 0.25) s.crit = round4(tinyP * 1.2);
+    if (Math.random() < 0.25) s.acc  = round4(tinyP * 1.0);
+    if (Math.random() < 0.35) s.hpMax = small(power * 0.10);
+    if (Math.random() < 0.20) s.enMax = small(power * 0.10);
   }
+
+  // 限制 crit/acc 避免爆掉
+  s.crit = clamp(s.crit, 0, 0.08);
+  s.acc  = clamp(s.acc,  0, 0.06);
   return s;
 }
 
 function rollRarity() {
   const x = Math.random();
-  if (x < 0.65) return RARITY[0]; // N
-  if (x < 0.88) return RARITY[1]; // R
-  if (x < 0.97) return RARITY[2]; // SR
-  return RARITY[3];              // UR
+  if (x < 0.64) return RARITY[0];
+  if (x < 0.87) return RARITY[1];
+  if (x < 0.97) return RARITY[2];
+  return RARITY[3];
 }
 
-// Quick equip: click slot => equip best matching from bag
+// ---------------------
+// Inventory actions
+// ---------------------
+function equipItemById(itemId) {
+  const p = S.player;
+  const it = p.bag.find(x => x.id === itemId);
+  if (!it || it.type !== "equip") return;
+
+  const slotKey = it.slot;
+  const cur = p.equips[slotKey];
+
+  p.equips[slotKey] = it;
+  p.bag = p.bag.filter(x => x.id !== it.id);
+  if (cur) p.bag.push(cur);
+
+  applyDerivedMax();
+  log(`裝備：${it.name}`);
+  saveLocal();
+}
+
 function equipBest(slotKey) {
   const p = S.player;
   const cand = p.bag.filter(it => it.type==="equip" && it.slot===slotKey);
   if (!cand.length) { toast("背包沒有可用裝備"); return; }
   cand.sort((a,b)=> (b.power - a.power));
-  const best = cand[0];
-
-  // swap with currently equipped
-  const cur = p.equips[slotKey];
-  p.equips[slotKey] = best;
-
-  // remove best from bag
-  p.bag = p.bag.filter(x => x.id !== best.id);
-  if (cur) p.bag.push(cur);
-
-  log(`裝備更新：${slotName(slotKey)} → ${best.name}`);
+  equipItemById(cand[0].id);
 }
 
-// ---- UI ----
+function dropItem(itemId) {
+  const p = S.player;
+  const it = p.bag.find(x => x.id === itemId);
+  if (!it) return;
+  p.bag = p.bag.filter(x => x.id !== itemId);
+  log(`丟棄：${it.name}`);
+  saveLocal();
+}
+
+function useConsumable(itemId) {
+  const p = S.player;
+  const it = p.bag.find(x => x.id === itemId);
+  if (!it || it.type !== "consumable") return;
+
+  applyDerivedMax();
+
+  if (it.kind === "heal_hp") p.hp = clamp(p.hp + it.amount, 0, p.hpMax);
+  if (it.kind === "heal_mp") p.mp = clamp(p.mp + it.amount, 0, p.mpMax);
+  if (it.kind === "heal_en") p.en = clamp(p.en + it.amount, 0, p.enMax);
+  if (it.kind === "gain_exe") p.exe = clamp(p.exe + it.amount, 0, p.exeMax);
+
+  p.bag = p.bag.filter(x => x.id !== itemId);
+  log(`使用：${it.name}（效果：${consumableDesc(it)}）`);
+  saveLocal();
+}
+
+function useBestPotionAuto() {
+  const p = S.player;
+  applyDerivedMax();
+
+  // 按缺口挑最佳（先補HP，再MP，再能量）
+  const hpNeed = p.hpMax - p.hp;
+  const mpNeed = p.mpMax - p.mp;
+  const enNeed = p.enMax - p.en;
+
+  let targetKind = "heal_hp";
+  if (hpNeed <= 0 && mpNeed > 0) targetKind = "heal_mp";
+  if (hpNeed <= 0 && mpNeed <= 0 && enNeed > 0) targetKind = "heal_en";
+  if (hpNeed <= 0 && mpNeed <= 0 && enNeed <= 0) { toast("不需要回復"); return; }
+
+  const cands = p.bag.filter(x => x.type==="consumable" && x.kind===targetKind);
+  if (!cands.length) { toast("沒有對應回復品"); return; }
+  cands.sort((a,b)=> b.amount - a.amount);
+  useConsumable(cands[0].id);
+}
+
+// ---------------------
+// Shop
+// ---------------------
+function getShopList() {
+  const p = S.player;
+  const lv = p.lv;
+
+  // 價格/數值隨等級變動（簡單）
+  const potSmall = mkConsumable("小型修復包", "heal_hp", 45 + lv*4, 35 + lv*3);
+  const potMp    = mkConsumable("MP 注入劑", "heal_mp", 28 + lv*3, 40 + lv*3);
+  const potEn    = mkConsumable("能量電池", "heal_en", 26 + lv*3, 28 + lv*2);
+
+  return [
+    { kind:"buy_item", item: potSmall, label:"回復 HP" },
+    { kind:"buy_item", item: potMp,    label:"回復 MP" },
+    { kind:"buy_item", item: potEn,    label:"回復 能量" },
+    { kind:"buy_box",  price: 60 + lv*8, label:"基礎裝備箱（隨機 1 件裝備）" },
+  ];
+}
+
+function buyShopEntry(entry) {
+  const p = S.player;
+
+  if (entry.kind === "buy_item") {
+    const price = entry.item.price;
+    if (p.gold < price) { toast("金幣不足"); return; }
+    p.gold -= price;
+    p.bag.push(entry.item);
+    log(`購買：${entry.item.name} -${price}G`);
+    saveLocal();
+    return;
+  }
+
+  if (entry.kind === "buy_box") {
+    if (p.gold < entry.price) { toast("金幣不足"); return; }
+    p.gold -= entry.price;
+    const eq = genEquip(p.lv);
+    p.bag.push(eq);
+    log(`購買：裝備箱，獲得 ${eq.name}`);
+    saveLocal();
+    return;
+  }
+}
+
+// ---------------------
+// UI
+// ---------------------
 const el = (id)=>document.getElementById(id);
 
 function render() {
+  // version
   el("versionText").textContent = S.meta.version || VERSION;
 
+  // numbers
   const p = S.player;
+  applyDerivedMax();
+
   el("lv").textContent = p.lv;
   el("xp").textContent = p.xp;
   el("xpNeed").textContent = xpNeed(p.lv);
   el("gold").textContent = p.gold;
+
+  // shop side quick info
+  const g2 = document.getElementById("gold2");
+  const lv2 = document.getElementById("lv2");
+  const sv = document.getElementById("saveVer");
+  if (g2) g2.textContent = p.gold;
+  if (lv2) lv2.textContent = p.lv;
+  if (sv) sv.textContent = S.meta.version || VERSION;
 
   setBar("hp", p.hp, p.hpMax);
   setBar("mp", p.mp, p.mpMax);
@@ -414,6 +646,7 @@ function render() {
   renderBag();
   renderLog();
   renderChangelog();
+  renderShop();
 }
 
 function setBar(prefix, cur, max) {
@@ -434,9 +667,9 @@ function renderEquip() {
     div.innerHTML = `
       <div class="name">${s.label}</div>
       <div class="meta">${it ? it.name : "（未裝備）"}</div>
-      <div class="meta">${it ? formatStats(it.stats) : ""}</div>
+      <div class="meta">${it ? formatEquipStats(it.stats) : ""}</div>
     `;
-    div.addEventListener("click", ()=> equipBest(s.key));
+    div.addEventListener("click", ()=> { equipBest(s.key); render(); });
     wrap.appendChild(div);
   }
 }
@@ -462,41 +695,115 @@ function renderBag() {
   const bag = S.player.bag;
 
   if (!bag.length) {
-    wrap.innerHTML = `<div class="hint">背包空空的。去打怪拿掉寶吧！</div>`;
+    wrap.innerHTML = `<div class="hint">背包空空的。去打怪或去商店買東西吧！</div>`;
     return;
   }
 
   for (const it of bag) {
     const d = document.createElement("div");
     d.className = "item";
-    d.innerHTML = `
-      <div class="top">
-        <div class="name">${it.name}</div>
-        <div class="badge">${rarityName(it.rarity)} • 強度 ${it.power}</div>
-      </div>
-      <div class="desc">部位：${slotName(it.slot)}<br/>${formatStats(it.stats)}</div>
-      <div class="btns">
-        <button>裝備到 ${slotName(it.slot)}</button>
-        <button class="danger">丟棄</button>
-      </div>
-    `;
-    const [btnEquip, btnDrop] = d.querySelectorAll("button");
-    btnEquip.addEventListener("click", ()=>{
-      // equip this item
-      const slotKey = it.slot;
-      const cur = S.player.equips[slotKey];
-      S.player.equips[slotKey] = it;
-      S.player.bag = S.player.bag.filter(x => x.id !== it.id);
-      if (cur) S.player.bag.push(cur);
-      log(`裝備：${it.name}`);
-      render();
-    });
-    btnDrop.addEventListener("click", ()=>{
-      S.player.bag = S.player.bag.filter(x => x.id !== it.id);
-      log(`丟棄：${it.name}`);
-      render();
-    });
+
+    if (it.type === "equip") {
+      const cur = S.player.equips[it.slot];
+      const diff = cur ? compareEquip(it, cur) : null;
+
+      d.innerHTML = `
+        <div class="top">
+          <div class="name">${it.name}</div>
+          <div class="badge">${rarityName(it.rarity)} • 強度 ${it.power}</div>
+        </div>
+        <div class="desc">
+          部位：${slotName(it.slot)}<br/>
+          ${formatEquipStats(it.stats)}
+          ${diff ? `<br/><br/><b>與目前裝備差異：</b><br/>${diff}` : ""}
+        </div>
+        <div class="btns">
+          <button class="btnEquip">裝備</button>
+          <button class="danger btnDrop">丟棄</button>
+        </div>
+      `;
+
+      d.querySelector(".btnEquip").addEventListener("click", ()=>{
+        equipItemById(it.id);
+        render();
+      });
+      d.querySelector(".btnDrop").addEventListener("click", ()=>{
+        dropItem(it.id);
+        render();
+      });
+
+    } else {
+      d.innerHTML = `
+        <div class="top">
+          <div class="name">${it.name}</div>
+          <div class="badge">消耗品 • ${it.price}G</div>
+        </div>
+        <div class="desc">
+          效果：${consumableDesc(it)}
+        </div>
+        <div class="btns">
+          <button class="btnUse">使用</button>
+          <button class="danger btnDrop">丟棄</button>
+        </div>
+      `;
+      d.querySelector(".btnUse").addEventListener("click", ()=>{
+        useConsumable(it.id);
+        render();
+      });
+      d.querySelector(".btnDrop").addEventListener("click", ()=>{
+        dropItem(it.id);
+        render();
+      });
+    }
+
     wrap.appendChild(d);
+  }
+}
+
+function renderShop() {
+  const wrap = document.getElementById("shop");
+  if (!wrap) return;
+
+  const list = getShopList();
+  wrap.innerHTML = "";
+
+  for (const entry of list) {
+    const card = document.createElement("div");
+    card.className = "item";
+
+    if (entry.kind === "buy_item") {
+      card.innerHTML = `
+        <div class="top">
+          <div class="name">${entry.item.name}</div>
+          <div class="badge">${entry.item.price}G</div>
+        </div>
+        <div class="desc">${entry.label}<br/>效果：${consumableDesc(entry.item)}</div>
+        <div class="btns">
+          <button class="btnBuy">購買</button>
+        </div>
+      `;
+      card.querySelector(".btnBuy").addEventListener("click", ()=>{
+        buyShopEntry(entry);
+        render();
+      });
+    } else {
+      card.innerHTML = `
+        <div class="top">
+          <div class="name">${entry.label}</div>
+          <div class="badge">${entry.price}G</div>
+        </div>
+        <div class="desc">隨機掉落 1 件裝備（部位隨機、稀有度隨機）。</div>
+        <div class="btns">
+          <button class="btnBuy">購買</button>
+        </div>
+      `;
+      card.querySelector(".btnBuy").addEventListener("click", ()=>{
+        buyShopEntry(entry);
+        render();
+      });
+    }
+
+    wrap.appendChild(card);
   }
 }
 
@@ -526,16 +833,18 @@ function changelogLi(c) {
   return li;
 }
 
-// ---- Logging & helpers ----
+// ---------------------
+// Logging & helpers
+// ---------------------
 function log(msg) {
   const time = new Date().toLocaleTimeString("zh-TW", {hour:"2-digit", minute:"2-digit"});
   S.battle.log.push(`[${time}] ${msg}`);
-  if (S.battle.log.length > 120) S.battle.log.shift();
+  if (S.battle.log.length > 140) S.battle.log.shift();
   render();
 }
 
 function toast(msg) {
-  // V0.0.1 簡化：用 log + alert 取代 fancy toast
+  // V0.0.2：簡化為 log（避免一直跳 alert）
   log(`ℹ️ ${msg}`);
 }
 
@@ -547,13 +856,52 @@ function escapeHtml(s){
   return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
 }
 
-function formatStats(st){
+function formatEquipStats(st){
   const parts = [];
   if (st.atk) parts.push(`攻擊 +${st.atk}`);
   if (st.def) parts.push(`防禦 +${st.def}`);
+  if (st.hpMax) parts.push(`HP上限 +${st.hpMax}`);
+  if (st.mpMax) parts.push(`MP上限 +${st.mpMax}`);
+  if (st.enMax) parts.push(`能量上限 +${st.enMax}`);
   if (st.crit) parts.push(`暴擊 +${Math.round(st.crit*100)}%`);
   if (st.acc) parts.push(`命中 +${Math.round(st.acc*100)}%`);
   return parts.join(" / ");
+}
+
+function compareEquip(newEq, curEq) {
+  // 顯示差異（新 - 舊）
+  const keys = ["atk","def","hpMax","mpMax","enMax","crit","acc"];
+  const lines = [];
+  for (const k of keys) {
+    const a = newEq.stats[k] || 0;
+    const b = curEq.stats[k] || 0;
+    const d = a - b;
+    if (Math.abs(d) < 1e-9) continue;
+
+    if (k==="crit" || k==="acc") {
+      lines.push(`${k === "crit" ? "暴擊" : "命中"} ${d>0?"+":""}${Math.round(d*100)}%`);
+    } else {
+      lines.push(`${keyCN(k)} ${d>0?"+":""}${Math.round(d)}`);
+    }
+  }
+  return lines.join("<br/>") || "（差異極小）";
+}
+
+function keyCN(k){
+  if (k==="atk") return "攻擊";
+  if (k==="def") return "防禦";
+  if (k==="hpMax") return "HP上限";
+  if (k==="mpMax") return "MP上限";
+  if (k==="enMax") return "能量上限";
+  return k;
+}
+
+function consumableDesc(it){
+  if (it.kind==="heal_hp") return `HP +${it.amount}`;
+  if (it.kind==="heal_mp") return `MP +${it.amount}`;
+  if (it.kind==="heal_en") return `能量 +${it.amount}`;
+  if (it.kind==="gain_exe") return `EXE +${it.amount}`;
+  return `+${it.amount}`;
 }
 
 function slotName(k){
@@ -571,15 +919,34 @@ function kindName(k){
 
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
-function round2(x){ return Math.round(x*10000)/10000; }
+function round4(x){ return Math.round(x*10000)/10000; }
 function cryptoId(){
-  // fallback-friendly
   if (crypto?.randomUUID) return crypto.randomUUID();
   return "id_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
-// ---- Events ----
+// ---------------------
+// Tabs
+// ---------------------
+function setTab(tabKey) {
+  document.querySelectorAll(".tab").forEach(b=>{
+    b.classList.toggle("active", b.dataset.tab === tabKey);
+  });
+  document.querySelectorAll(".tabpage").forEach(p=>{
+    p.classList.toggle("hidden", p.dataset.tabpage !== tabKey);
+  });
+  render();
+}
+
+// ---------------------
+// Events
+// ---------------------
 window.addEventListener("DOMContentLoaded", ()=>{
+  // tabs
+  document.querySelectorAll(".tab").forEach(btn=>{
+    btn.addEventListener("click", ()=> setTab(btn.dataset.tab));
+  });
+
   el("btnSave").addEventListener("click", saveLocal);
   el("btnLoad").addEventListener("click", ()=>{ if(!loadLocal()) toast("沒有存檔"); render(); });
 
@@ -591,8 +958,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
     try{
       const obj = importFromText(el("importText").value);
       S = obj;
+      migrateIfNeeded();
       toast("匯入成功");
       el("importModal").close();
+      saveLocal();
       render();
     }catch(e){
       alert("匯入失敗：" + e.message);
@@ -607,7 +976,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     render();
   });
 
-  el("btnRest").addEventListener("click", ()=>{ rest(); render(); });
+  el("btnRest").addEventListener("click", ()=>{ rest(); saveLocal(); render(); });
 
   el("btnSpawn").addEventListener("click", ()=>{ spawnEnemy(); render(); });
   el("btnAttack").addEventListener("click", ()=> attack("basic"));
@@ -618,17 +987,28 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const drops = rollLoot(S.player.lv);
     for (const it of drops) S.player.bag.push(it);
     log(`測試掉寶：${drops.length ? drops.map(x=>x.name).join("、") : "無"}`);
+    saveLocal();
     render();
   });
 
   el("btnSortBag").addEventListener("click", ()=>{
     const rank = { "UR":3, "SR":2, "R":1, "N":0 };
     S.player.bag.sort((a,b)=>{
-      const ra = rank[a.rarity] ?? 0, rb = rank[b.rarity] ?? 0;
+      const ra = a.type==="equip" ? (rank[a.rarity] ?? 0) : -1;
+      const rb = b.type==="equip" ? (rank[b.rarity] ?? 0) : -1;
       if (rb !== ra) return rb - ra;
-      return (b.power - a.power);
+
+      const pa = a.type==="equip" ? a.power : a.amount;
+      const pb = b.type==="equip" ? b.power : b.amount;
+      return pb - pa;
     });
     toast("已整理背包");
+    saveLocal();
+    render();
+  });
+
+  el("btnUseBestPotion").addEventListener("click", ()=>{
+    useBestPotionAuto();
     render();
   });
 
@@ -638,17 +1018,19 @@ window.addEventListener("DOMContentLoaded", ()=>{
   el("btnToggleAuto").addEventListener("click", ()=>{
     S.battle.auto = !S.battle.auto;
     el("btnToggleAuto").textContent = `自動戰鬥：${S.battle.auto ? "開" : "關"}`;
+    saveLocal();
   });
 
-  // Auto battle tick (simple)
+  // Auto battle tick (safe)
   setInterval(()=>{
     if (!S.battle.auto) return;
+    // 如果正在看商店，也照樣跑（可關掉）
     if (!S.battle.enemy) spawnEnemy();
     attack("basic");
-  }, 900);
+  }, 950);
 
-  // initialize version
-  S.meta.version = S.meta.version || VERSION;
-
+  // ensure version
+  S.meta.version = VERSION;
+  saveLocal();
   render();
 });
