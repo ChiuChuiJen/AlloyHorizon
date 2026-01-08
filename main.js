@@ -1,34 +1,20 @@
 // =====================
-// Mecha RPG V0.0.4 — UI Gear Settings + Fix Bars + AutoStop on Death + EXE persists
+// Mecha RPG V0.0.5 — EXE for Leveling, Coherence for Burst, Subtabs, Unequip, Log newest-first
 // =====================
 
-const VERSION = "V0.0.4";
+const VERSION = "V0.0.5";
 
 const CHANGELOG = [
   {
-    version: "V0.0.4",
+    version: "V0.0.5",
     date: "2026-01-08",
     notes: [
-      "探索/商店採水平分頁；新增齒輪⚙️整合存檔/讀檔/匯入/匯出/重置",
-      "修正血條/MP條/能量/EXE 顯示：bar-fill 加上可視背景並保持即時更新",
-      "自動戰鬥：死亡時自動停止；EXE 不因死亡歸零（可累積保留）"
+      "EXE 改為升級專用（擊敗敵人累積 EXE，達門檻自動升級）",
+      "能量改為『同心率』，用於機體爆發（原 EXE 爆發用途）",
+      "裝備/戰鬥/背包合併同一排分頁；戰鬥紀錄改最新在最上面",
+      "裝備欄新增卸下功能（卸下回到背包）"
     ]
   },
-  {
-    version: "V0.0.3",
-    date: "2026-01-08",
-    notes: [
-      "加入探索模式：1~10層（一般/菁英/Mini Boss/Boss）分層怪物池",
-      "Boss 戰利品箱：保底裝備 + 高機率消耗品"
-    ]
-  },
-  {
-    version: "V0.0.2",
-    date: "2026-01-08",
-    notes: [
-      "可玩循環：掉寶、消耗品使用、商店、裝備影響最大值"
-    ]
-  }
 ];
 
 const EQUIP_SLOTS = [
@@ -50,12 +36,12 @@ const RARITY = [
 ];
 
 const LS_KEY = "mecha_rpg_save";
-
-// Tower
 const TOWER_MAX_FLOOR = 10;
+
 function defaultFloorPlan() {
   return { normalsDone:0, normalNeed:3, eliteDone:false, miniBossDone:false, bossDone:false, lastEncounter:null };
 }
+
 function floorEnemyPool(floor) {
   const base = floor * 2;
   const normal = [
@@ -80,6 +66,7 @@ function floorEnemyPool(floor) {
   ];
   return { normal, elite, mini, boss, base };
 }
+
 function nextEncounterTypeForFloorState(fs) {
   if (fs.bossDone) return "CLEARED";
   if (!fs.miniBossDone) {
@@ -89,25 +76,33 @@ function nextEncounterTypeForFloorState(fs) {
   return "BOSS_READY";
 }
 
-// State
 function mkConsumable(name, kind, amount, price) {
   return { id: cryptoId(), type:"consumable", name, kind, amount, price };
 }
+
+/**
+ * ✅ 新定義：
+ * - exeLv: 升級用 EXE（取代原本 xp）
+ * - coh:  同心率（取代原本 en）
+ */
 function newGameState() {
   return {
     meta: { version: VERSION, createdAt: Date.now(), updatedAt: Date.now() },
     player: {
-      lv: 1, xp: 0, gold: 120,
+      lv: 1,
+      exeLv: 0,   // ✅ 升級專用
+      gold: 120,
       base: { atk: 10, def: 5, crit: 0.05, acc: 0.90 },
+
       hp: 120, hpMax: 120,
       mp: 40,  mpMax: 40,
-      en: 50,  enMax: 50,
-      exe: 0,  exeMax: 100,
+
+      coh: 50, cohMax: 50, // ✅ 同心率（爆發用）
       equips: Object.fromEntries(EQUIP_SLOTS.map(s => [s.key, null])),
       bag: [
         mkConsumable("小型修復包", "heal_hp", 45, 35),
-        mkConsumable("能量電池", "heal_en", 30, 28),
-        mkConsumable("資料注入針", "gain_exe", 15, 25),
+        mkConsumable("同心注入劑", "heal_coh", 30, 28),
+        mkConsumable("資料注入針", "gain_exe", 18, 25),
       ],
     },
     tower: { floor: 1, floorState: defaultFloorPlan() },
@@ -123,6 +118,25 @@ function migrateIfNeeded() {
   if (!S.meta.version) S.meta.version = VERSION;
 
   if (!S.player) S.player = newGameState().player;
+
+  // ✅ 舊版兼容：xp -> exeLv
+  if (typeof S.player.exeLv !== "number") {
+    if (typeof S.player.xp === "number") S.player.exeLv = S.player.xp;
+    else S.player.exeLv = 0;
+  }
+  delete S.player.xp;
+
+  // ✅ 舊版兼容：en -> coh
+  if (typeof S.player.coh !== "number") {
+    if (typeof S.player.en === "number") S.player.coh = S.player.en;
+    else S.player.coh = 0;
+  }
+  if (typeof S.player.cohMax !== "number") {
+    if (typeof S.player.enMax === "number") S.player.cohMax = S.player.enMax;
+    else S.player.cohMax = 50;
+  }
+  delete S.player.en; delete S.player.enMax;
+
   if (!S.player.equips) S.player.equips = Object.fromEntries(EQUIP_SLOTS.map(s => [s.key, null]));
   for (const s of EQUIP_SLOTS) if (!(s.key in S.player.equips)) S.player.equips[s.key] = null;
   if (!Array.isArray(S.player.bag)) S.player.bag = [];
@@ -136,12 +150,13 @@ function migrateIfNeeded() {
   applyDerivedMax();
 }
 
-// Save/Load
 function saveLocal() {
+  S.meta.version = VERSION;
   S.meta.updatedAt = Date.now();
   localStorage.setItem(LS_KEY, JSON.stringify(S));
   toast("已儲存到瀏覽器");
 }
+
 function loadLocal() {
   const raw = localStorage.getItem(LS_KEY);
   if (!raw) return false;
@@ -152,6 +167,7 @@ function loadLocal() {
     return true;
   } catch { return false; }
 }
+
 function loadOrInit() {
   const raw = localStorage.getItem(LS_KEY);
   if (!raw) return newGameState();
@@ -159,11 +175,7 @@ function loadOrInit() {
 }
 
 // Export/Import
-function exportJSON() {
-  const json = JSON.stringify(S);
-  copyToClipboard(json);
-  toast("JSON 已複製到剪貼簿");
-}
+function exportJSON() { copyToClipboard(JSON.stringify(S)); toast("JSON 已複製到剪貼簿"); }
 function exportB64() {
   const json = JSON.stringify(S);
   const b64 = btoa(unescape(encodeURIComponent(json)));
@@ -178,36 +190,37 @@ function importFromText(text) {
   return JSON.parse(json);
 }
 
-// Mechanics
-function xpNeed(lv) {
+// ✅ EXE(升級)門檻
+function exeNeed(lv) {
   return Math.floor(120 + (lv - 1) * 70 + Math.pow(lv - 1, 1.35) * 25);
 }
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
 function applyDerivedMax() {
   const p = S.player;
-  let hpBonus = 0, mpBonus = 0, enBonus = 0;
+  let hpBonus = 0, mpBonus = 0, cohBonus = 0;
 
   for (const k of Object.keys(p.equips)) {
     const it = p.equips[k];
     if (!it || it.type !== "equip") continue;
     hpBonus += it.stats.hpMax || 0;
     mpBonus += it.stats.mpMax || 0;
-    enBonus += it.stats.enMax || 0;
+    // 兼容：舊裝備若有 enMax 就算到 cohMax
+    cohBonus += (it.stats.cohMax || 0) + (it.stats.enMax || 0);
   }
 
   const baseHp = 120 + (p.lv - 1) * 20;
   const baseMp = 40 + (p.lv - 1) * 6;
-  const baseEn = 50 + (p.lv - 1) * 6;
+  const baseCoh = 50 + (p.lv - 1) * 6;
 
   p.hpMax = Math.max(1, Math.floor(baseHp + hpBonus));
   p.mpMax = Math.max(1, Math.floor(baseMp + mpBonus));
-  p.enMax = Math.max(1, Math.floor(baseEn + enBonus));
+  p.cohMax = Math.max(1, Math.floor(baseCoh + cohBonus));
 
   p.hp = clamp(p.hp, 0, p.hpMax);
   p.mp = clamp(p.mp, 0, p.mpMax);
-  p.en = clamp(p.en, 0, p.enMax);
-  p.exe = clamp(p.exe, 0, p.exeMax);
+  p.coh = clamp(p.coh, 0, p.cohMax);
+  p.exeLv = clamp(p.exeLv, 0, exeNeed(p.lv));
 }
 
 function calcTotalStats() {
@@ -221,13 +234,10 @@ function calcTotalStats() {
     const it = p.equips[k];
     if (!it) continue;
     atk  += it.stats.atk || 0;
-    def  += it.stats.def || 0;
+    def Oklahoma: def  += it.stats.def || 0;
     crit += it.stats.crit || 0;
     acc  += it.stats.acc || 0;
   }
-
-  const exeBonus = (p.exe / 100) * 0.10;
-  atk = Math.floor(atk * (1 + exeBonus));
 
   crit = clamp(crit, 0, 0.40);
   acc  = clamp(acc, 0.65, 0.99);
@@ -239,14 +249,12 @@ function rest() {
   applyDerivedMax();
   p.hp = clamp(p.hp + Math.floor(p.hpMax * 0.25), 0, p.hpMax);
   p.mp = clamp(p.mp + Math.floor(p.mpMax * 0.35), 0, p.mpMax);
-  p.en = clamp(p.en + Math.floor(p.enMax * 0.35), 0, p.enMax);
-  // EXE 依然可小幅下降（你若想完全不降也可改掉）
-  p.exe = clamp(p.exe - 5, 0, p.exeMax);
-  log(`維修完成：HP/MP/能量回復（不超過最大值），EXE略降`);
+  p.coh = clamp(p.coh + Math.floor(p.cohMax * 0.35), 0, p.cohMax);
+  log(`維修完成：HP/MP/同心率回復（不超過最大值）`);
   saveLocal();
 }
 
-// Tower flow
+// Tower
 function canGoNextFloor() {
   const fs = S.tower.floorState;
   return fs.bossDone && S.tower.floor < TOWER_MAX_FLOOR;
@@ -267,7 +275,6 @@ function exploreNext() {
   if (fs.bossDone) { toast("本層已通關，請前往下一層"); return; }
 
   const planType = nextEncounterTypeForFloorState(fs);
-
   if (planType === "MINI") { spawnTowerEnemy("MINI"); return; }
   if (planType === "BOSS_READY") { toast("本層已可挑戰 Boss（點『挑戰 Boss』）"); return; }
 
@@ -290,8 +297,7 @@ function goNextFloor() {
   S.tower.floor += 1;
   S.tower.floorState = defaultFloorPlan();
   log(`➡️ 前往第 ${S.tower.floor} 層`);
-  saveLocal();
-  render();
+  saveLocal(); render();
 }
 function resetTower() {
   S.tower.floor = 1;
@@ -299,9 +305,9 @@ function resetTower() {
   S.battle.enemy = null;
   S.battle.enemyType = null;
   log("↩️ 回到第1層（重置探索進度）");
-  saveLocal();
-  render();
+  saveLocal(); render();
 }
+
 function spawnTowerEnemy(type) {
   const floor = S.tower.floor;
   const pool = floorEnemyPool(floor);
@@ -352,9 +358,9 @@ function attack(kind="basic") {
     if (p.mp < 12) { toast("MP 不足"); return; }
     p.mp -= 12;
   }
-  if (kind === "exe") {
-    if (p.exe < 30) { toast("同步率不足（需 30）"); return; }
-    p.exe -= 30;
+  if (kind === "burst") { // ✅ 爆發耗同心率
+    if (p.coh < 30) { toast("同心率不足（需 30）"); return; }
+    p.coh -= 30;
   }
 
   const hit = Math.random() < st.acc;
@@ -362,7 +368,7 @@ function attack(kind="basic") {
 
   let mult = 1.0;
   if (kind === "skill") mult = 1.40;
-  if (kind === "exe")   mult = 2.15;
+  if (kind === "burst") mult = 2.15;
 
   const isCrit = Math.random() < st.crit;
   const critMult = isCrit ? 1.65 : 1.0;
@@ -372,16 +378,14 @@ function attack(kind="basic") {
 
   e.hp = clamp(e.hp - dmg, 0, e.hpMax);
 
-  p.en  = clamp(p.en + 3, 0, p.enMax);
-  p.exe = clamp(p.exe + (kind==="exe" ? 0 : 3), 0, p.exeMax);
-  if (kind === "skill") p.exe = clamp(p.exe + 5, 0, p.exeMax);
-  if (kind === "exe")   p.en  = clamp(p.en + 10, 0, p.enMax);
+  // ✅ 資源回復：同心率慢慢回；升級EXE由勝利給
+  p.coh = clamp(p.coh + (kind==="burst" ? 0 : 3), 0, p.cohMax);
 
   log(`你使用${kindName(kind)}造成 ${dmg} 傷害${isCrit ? "（暴擊）" : ""}！`);
 
   if (e.hp <= 0) { winBattle(); render(); return; }
   enemyTurn();
-  render(); // ✅ 確保每次按鈕動作都立即刷新條
+  render();
 }
 
 function enemyTurn() {
@@ -395,8 +399,7 @@ function enemyTurn() {
   const raw = Math.floor(e.atk * (0.9 + Math.random() * 0.3));
   const dmg = Math.max(1, raw - st.def);
 
-  p.hp  = clamp(p.hp - dmg, 0, p.hpMax);
-  p.exe = clamp(p.exe + 4, 0, p.exeMax);
+  p.hp = clamp(p.hp - dmg, 0, p.hpMax);
 
   log(`敵人反擊，造成你 ${dmg} 傷害。`);
 
@@ -405,14 +408,15 @@ function enemyTurn() {
     p.hp = Math.max(1, Math.floor(p.hpMax * 0.30));
     p.gold = Math.max(0, p.gold - 25);
 
-    // ✅ 你的要求：EXE 不因死亡歸零（所以不改 p.exe）
-    // ✅ 你的要求：自動戰鬥死亡即停止
+    // ✅ 死亡停止自動戰鬥
     if (S.battle.auto) {
       S.battle.auto = false;
       setAutoButtonText();
       log("⛔ 自動戰鬥已停止（死亡觸發）");
     }
 
+    // ✅ 同心率不歸零（你沒要求重置），這裡不動 p.coh
+    // ✅ EXE(升級)也不重置
     S.battle.enemy = null;
     S.battle.enemyType = null;
     saveLocal();
@@ -424,14 +428,14 @@ function winBattle() {
   const e = S.battle.enemy;
   const et = S.battle.enemyType || "NORMAL";
 
-  const gainXP   = Math.floor((55 + e.lv * 28) * xpMultByEncounter(et));
+  // ✅ EXE(升級)取代舊 xp
+  const gainEXE  = Math.floor((55 + e.lv * 28) * exeMultByEncounter(et));
   const gainGold = Math.floor((15 + e.lv * 9)  * goldMultByEncounter(et));
 
-  p.xp += gainXP;
+  p.exeLv += gainEXE;
   p.gold += gainGold;
-  p.exe = clamp(p.exe + 10, 0, p.exeMax);
 
-  log(`✅ 擊敗 ${e.name}（${labelEncounter(et)}）！EXP+${gainXP} 金幣+${gainGold} EXE+10`);
+  log(`✅ 擊敗 ${e.name}（${labelEncounter(et)}）！EXE+${gainEXE} 金幣+${gainGold}`);
 
   const drops = rollLoot(e.lv, et);
   for (const it of drops) p.bag.push(it);
@@ -451,7 +455,7 @@ function winBattle() {
   saveLocal();
 }
 
-function xpMultByEncounter(et){
+function exeMultByEncounter(et){
   if (et==="BOSS") return 2.2;
   if (et==="MINI") return 1.6;
   if (et==="ELITE") return 1.35;
@@ -466,14 +470,14 @@ function goldMultByEncounter(et){
 
 function levelUpIfNeeded() {
   const p = S.player;
-  let need = xpNeed(p.lv);
-  while (p.xp >= need) {
-    p.xp -= need;
+  let need = exeNeed(p.lv);
+  while (p.exeLv >= need) {
+    p.exeLv -= need;
     p.lv += 1;
     applyDerivedMax();
-    p.hp = p.hpMax; p.mp = p.mpMax; p.en = p.enMax;
+    p.hp = p.hpMax; p.mp = p.mpMax; p.coh = p.cohMax;
     log(`⬆️ 升級！目前 Lv.${p.lv}`);
-    need = xpNeed(p.lv);
+    need = exeNeed(p.lv);
   }
 }
 
@@ -504,7 +508,6 @@ function rollLoot(enemyLv, encounterType="NORMAL") {
     out.push(genEquip(enemyLv + 2, "BOSS"));
     if (Math.random() < 0.70) out.push(genConsumable(enemyLv + 2));
   }
-
   return out;
 }
 
@@ -513,8 +516,8 @@ function genConsumable(lv) {
     { name:"小型修復包", kind:"heal_hp", base: 40, costK: 35 },
     { name:"中型修復包", kind:"heal_hp", base: 85, costK: 80 },
     { name:"MP 注入劑", kind:"heal_mp", base: 30, costK: 45 },
-    { name:"能量電池", kind:"heal_en", base: 30, costK: 28 },
-    { name:"資料注入針", kind:"gain_exe", base: 15, costK: 25 },
+    { name:"同心注入劑", kind:"heal_coh", base: 30, costK: 28 },
+    { name:"資料注入針", kind:"gain_exe", base: 18, costK: 25 },
   ]);
   const amount = Math.floor(t.base + lv * (t.kind==="heal_hp" ? 5 : 3));
   const price  = Math.floor(t.costK + lv * 4);
@@ -553,7 +556,7 @@ function rollRarity(encounterType="NORMAL") {
 }
 
 function baseStatsBySlot(slotKey, power){
-  const s = { atk:0, def:0, crit:0, acc:0, hpMax:0, mpMax:0, enMax:0 };
+  const s = { atk:0, def:0, crit:0, acc:0, hpMax:0, mpMax:0, cohMax:0 };
   const small = (x)=> Math.max(0, Math.floor(x));
   const tinyP = power / 6000;
 
@@ -569,14 +572,14 @@ function baseStatsBySlot(slotKey, power){
     s.hpMax = small(power * 0.20);
   } else if (slotKey === "legs") {
     s.def = Math.floor(power * 1.10);
-    s.enMax = small(power * 0.12);
+    s.cohMax = small(power * 0.12);
   } else {
     if (Math.random() < 0.5) s.atk = Math.floor(power * 0.65);
     else s.def = Math.floor(power * 0.65);
     if (Math.random() < 0.25) s.crit = round4(tinyP * 1.2);
     if (Math.random() < 0.25) s.acc  = round4(tinyP * 1.0);
     if (Math.random() < 0.35) s.hpMax = small(power * 0.10);
-    if (Math.random() < 0.20) s.enMax = small(power * 0.10);
+    if (Math.random() < 0.20) s.cohMax = small(power * 0.10);
   }
 
   s.crit = clamp(s.crit, 0, 0.08);
@@ -602,6 +605,7 @@ function equipItemById(itemId) {
   saveLocal();
   render();
 }
+
 function equipBest(slotKey) {
   const p = S.player;
   const cand = p.bag.filter(it => it.type==="equip" && it.slot===slotKey);
@@ -609,6 +613,20 @@ function equipBest(slotKey) {
   cand.sort((a,b)=> (b.power - a.power));
   equipItemById(cand[0].id);
 }
+
+// ✅ 卸下裝備
+function unequip(slotKey){
+  const p = S.player;
+  const cur = p.equips[slotKey];
+  if (!cur) { toast("此部位沒有裝備"); return; }
+  p.equips[slotKey] = null;
+  p.bag.push(cur);
+  applyDerivedMax();
+  log(`卸下：${cur.name}`);
+  saveLocal();
+  render();
+}
+
 function dropItem(itemId) {
   const p = S.player;
   const it = p.bag.find(x => x.id === itemId);
@@ -618,6 +636,7 @@ function dropItem(itemId) {
   saveLocal();
   render();
 }
+
 function useConsumable(itemId) {
   const p = S.player;
   const it = p.bag.find(x => x.id === itemId);
@@ -626,26 +645,31 @@ function useConsumable(itemId) {
   applyDerivedMax();
   if (it.kind === "heal_hp") p.hp = clamp(p.hp + it.amount, 0, p.hpMax);
   if (it.kind === "heal_mp") p.mp = clamp(p.mp + it.amount, 0, p.mpMax);
-  if (it.kind === "heal_en") p.en = clamp(p.en + it.amount, 0, p.enMax);
-  if (it.kind === "gain_exe") p.exe = clamp(p.exe + it.amount, 0, p.exeMax);
+  if (it.kind === "heal_coh") p.coh = clamp(p.coh + it.amount, 0, p.cohMax);
+  if (it.kind === "gain_exe") p.exeLv = clamp(p.exeLv + it.amount, 0, exeNeed(p.lv));
 
   p.bag = p.bag.filter(x => x.id !== itemId);
   log(`使用：${it.name}（效果：${consumableDesc(it)}）`);
+
+  // 如果用道具把 EXE 補滿，允許升級
+  levelUpIfNeeded();
+
   saveLocal();
   render();
 }
+
 function useBestPotionAuto() {
   const p = S.player;
   applyDerivedMax();
 
   const hpNeed = p.hpMax - p.hp;
   const mpNeed = p.mpMax - p.mp;
-  const enNeed = p.enMax - p.en;
+  const cohNeed = p.cohMax - p.coh;
 
   let targetKind = "heal_hp";
   if (hpNeed <= 0 && mpNeed > 0) targetKind = "heal_mp";
-  if (hpNeed <= 0 && mpNeed <= 0 && enNeed > 0) targetKind = "heal_en";
-  if (hpNeed <= 0 && mpNeed <= 0 && enNeed <= 0) { toast("不需要回復"); return; }
+  if (hpNeed <= 0 && mpNeed <= 0 && cohNeed > 0) targetKind = "heal_coh";
+  if (hpNeed <= 0 && mpNeed <= 0 && cohNeed <= 0) { toast("不需要回復"); return; }
 
   const cands = p.bag.filter(x => x.type==="consumable" && x.kind===targetKind);
   if (!cands.length) { toast("沒有對應回復品"); return; }
@@ -659,11 +683,13 @@ function getShopList() {
   const lv = p.lv;
   const potSmall = mkConsumable("小型修復包", "heal_hp", 45 + lv*4, 35 + lv*3);
   const potMp    = mkConsumable("MP 注入劑", "heal_mp", 28 + lv*3, 40 + lv*3);
-  const potEn    = mkConsumable("能量電池", "heal_en", 26 + lv*3, 28 + lv*2);
+  const potCoh   = mkConsumable("同心注入劑", "heal_coh", 26 + lv*3, 28 + lv*2);
+  const exeNeedle= mkConsumable("資料注入針", "gain_exe", 18 + lv*2, 25 + lv*3);
   return [
     { kind:"buy_item", item: potSmall, label:"回復 HP" },
     { kind:"buy_item", item: potMp,    label:"回復 MP" },
-    { kind:"buy_item", item: potEn,    label:"回復 能量" },
+    { kind:"buy_item", item: potCoh,   label:"回復 同心率" },
+    { kind:"buy_item", item: exeNeedle,label:"增加 EXE（升級值）" },
     { kind:"buy_box",  price: 60 + lv*8, label:"基礎裝備箱（隨機 1 件裝備）" },
   ];
 }
@@ -675,8 +701,7 @@ function buyShopEntry(entry) {
     p.gold -= price;
     p.bag.push(entry.item);
     log(`購買：${entry.item.name} -${price}G`);
-    saveLocal();
-    render();
+    saveLocal(); render();
     return;
   }
   if (entry.kind === "buy_box") {
@@ -685,9 +710,7 @@ function buyShopEntry(entry) {
     const eq = genEquip(p.lv, "NORMAL");
     p.bag.push(eq);
     log(`購買：裝備箱，獲得 ${eq.name}`);
-    saveLocal();
-    render();
-    return;
+    saveLocal(); render();
   }
 }
 
@@ -701,8 +724,6 @@ function render() {
   applyDerivedMax();
 
   el("lv").textContent = p.lv;
-  el("xp").textContent = p.xp;
-  el("xpNeed").textContent = xpNeed(p.lv);
   el("gold").textContent = p.gold;
 
   el("gold2").textContent = p.gold;
@@ -710,11 +731,18 @@ function render() {
   el("saveVer").textContent = S.meta.version || VERSION;
   el("floor2").textContent = S.tower.floor;
 
-  // ✅ 即時條顯示（每次 render 都刷）
-  setBar("hp", p.hp, p.hpMax);
-  setBar("mp", p.mp, p.mpMax);
-  setBar("en", p.en, p.enMax);
-  setBar("exe", p.exe, p.exeMax);
+  // ✅ 升級EXE顯示
+  el("exeLvVal").textContent = p.exeLv;
+  el("exeLvNeed").textContent = exeNeed(p.lv);
+
+  // ✅ 即時條
+  setBar("hp", p.hp, p.hpMax, "hpBar", "hpText");
+  setBar("mp", p.mp, p.mpMax, "mpBar", "mpText");
+  setBar("coh", p.coh, p.cohMax, "cohBar", "cohText");
+
+  // EXE 升級條（比例= exeLv / need）
+  el("exeBarText").textContent = `${p.exeLv} / ${exeNeed(p.lv)}`;
+  el("exeLvBar").style.width = `${(p.exeLv / exeNeed(p.lv)) * 100}%`;
 
   const st = calcTotalStats();
   el("atk").textContent = st.atk;
@@ -732,13 +760,13 @@ function render() {
   renderChangelog();
   renderShop();
 
-  setAutoButtonText(); // ✅ 任何地方render都同步按鈕文字
+  setAutoButtonText();
 }
 
-function setBar(prefix, cur, max) {
-  el(prefix+"Text").textContent = `${cur} / ${max}`;
+function setBar(prefix, cur, max, barId, textId) {
+  el(textId).textContent = `${cur} / ${max}`;
   const pct = max<=0 ? 0 : (cur/max)*100;
-  el(prefix+"Bar").style.width = `${pct}%`;
+  el(barId).style.width = `${pct}%`;
 }
 
 function renderFloorInfo() {
@@ -767,12 +795,29 @@ function renderEquip() {
     const it = p.equips[s.key];
     const div = document.createElement("div");
     div.className = "slot";
+
     div.innerHTML = `
-      <div class="name">${s.label}</div>
-      <div class="meta">${it ? it.name : "（未裝備）"}</div>
+      <div class="top">
+        <div class="name">${s.label}</div>
+        <div class="badge">${it ? `已裝備` : `未裝備`}</div>
+      </div>
+      <div class="meta">${it ? it.name : "（—）"}</div>
       <div class="meta">${it ? formatEquipStats(it.stats) : ""}</div>
+      <div class="actions">
+        <button class="btnBest">裝最強</button>
+        <button class="btnUnequip danger">卸下</button>
+      </div>
     `;
-    div.addEventListener("click", ()=> { equipBest(s.key); });
+
+    div.querySelector(".btnBest").addEventListener("click", ()=> equipBest(s.key));
+    div.querySelector(".btnUnequip").addEventListener("click", ()=> unequip(s.key));
+
+    // 點整個格也可以裝最強（保留你的習慣）
+    div.addEventListener("click", (ev)=>{
+      if (ev.target.closest("button")) return;
+      equipBest(s.key);
+    });
+
     wrap.appendChild(div);
   }
 }
@@ -807,9 +852,6 @@ function renderBag() {
     d.className = "item";
 
     if (it.type === "equip") {
-      const cur = S.player.equips[it.slot];
-      const diff = cur ? compareEquip(it, cur) : null;
-
       d.innerHTML = `
         <div class="top">
           <div class="name">${it.name}</div>
@@ -818,7 +860,6 @@ function renderBag() {
         <div class="desc">
           部位：${slotName(it.slot)}<br/>
           ${formatEquipStats(it.stats)}
-          ${diff ? `<br/><br/><b>與目前裝備差異：</b><br/>${diff}` : ""}
         </div>
         <div class="btns">
           <button class="btnEquip">裝備</button>
@@ -827,7 +868,6 @@ function renderBag() {
       `;
       d.querySelector(".btnEquip").addEventListener("click", ()=> equipItemById(it.id));
       d.querySelector(".btnDrop").addEventListener("click", ()=> dropItem(it.id));
-
     } else {
       d.innerHTML = `
         <div class="top">
@@ -883,10 +923,11 @@ function renderShop() {
   }
 }
 
+// ✅ 戰鬥紀錄：最新在最上面（由上往下看）
 function renderLog() {
   const wrap = el("log");
   wrap.innerHTML = S.battle.log.map(line => `<div>${escapeHtml(line)}</div>`).join("");
-  wrap.scrollTop = wrap.scrollHeight;
+  wrap.scrollTop = 0; // 固定在最上面
 }
 
 function renderChangelog() {
@@ -909,12 +950,11 @@ function changelogLi(c) {
   return li;
 }
 
-// Helpers
+// Log helpers — ✅ 最新放最上面：unshift
 function log(msg) {
   const time = new Date().toLocaleTimeString("zh-TW", {hour:"2-digit", minute:"2-digit"});
-  S.battle.log.push(`[${time}] ${msg}`);
-  if (S.battle.log.length > 180) S.battle.log.shift();
-  // log 本身也 render，確保每一步都看到變化
+  S.battle.log.unshift(`[${time}] ${msg}`);
+  if (S.battle.log.length > 180) S.battle.log.pop();
   render();
 }
 function toast(msg) { log(`ℹ️ ${msg}`); }
@@ -925,9 +965,7 @@ function setAutoButtonText() {
   b.textContent = `自動戰鬥：${S.battle.auto ? "開" : "關"}`;
 }
 
-function copyToClipboard(text) {
-  navigator.clipboard?.writeText(text).catch(()=>{});
-}
+function copyToClipboard(text) { navigator.clipboard?.writeText(text).catch(()=>{}); }
 function escapeHtml(s){
   return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
 }
@@ -938,44 +976,18 @@ function formatEquipStats(st){
   if (st.def) parts.push(`防禦 +${st.def}`);
   if (st.hpMax) parts.push(`HP上限 +${st.hpMax}`);
   if (st.mpMax) parts.push(`MP上限 +${st.mpMax}`);
-  if (st.enMax) parts.push(`能量上限 +${st.enMax}`);
+  if (st.cohMax) parts.push(`同心率上限 +${st.cohMax}`);
+  if (st.enMax) parts.push(`同心率上限 +${st.enMax}`); // 舊裝備兼容
   if (st.crit) parts.push(`暴擊 +${Math.round(st.crit*100)}%`);
   if (st.acc) parts.push(`命中 +${Math.round(st.acc*100)}%`);
   return parts.join(" / ");
 }
 
-function compareEquip(newEq, curEq) {
-  const keys = ["atk","def","hpMax","mpMax","enMax","crit","acc"];
-  const lines = [];
-  for (const k of keys) {
-    const a = newEq.stats[k] || 0;
-    const b = curEq.stats[k] || 0;
-    const d = a - b;
-    if (Math.abs(d) < 1e-9) continue;
-
-    if (k==="crit" || k==="acc") {
-      lines.push(`${k === "crit" ? "暴擊" : "命中"} ${d>0?"+":""}${Math.round(d*100)}%`);
-    } else {
-      lines.push(`${keyCN(k)} ${d>0?"+":""}${Math.round(d)}`);
-    }
-  }
-  return lines.join("<br/>") || "（差異極小）";
-}
-
-function keyCN(k){
-  if (k==="atk") return "攻擊";
-  if (k==="def") return "防禦";
-  if (k==="hpMax") return "HP上限";
-  if (k==="mpMax") return "MP上限";
-  if (k==="enMax") return "能量上限";
-  return k;
-}
-
 function consumableDesc(it){
   if (it.kind==="heal_hp") return `HP +${it.amount}`;
   if (it.kind==="heal_mp") return `MP +${it.amount}`;
-  if (it.kind==="heal_en") return `能量 +${it.amount}`;
-  if (it.kind==="gain_exe") return `EXE +${it.amount}`;
+  if (it.kind==="heal_coh") return `同心率 +${it.amount}`;
+  if (it.kind==="gain_exe") return `EXE（升級值） +${it.amount}`;
   return `+${it.amount}`;
 }
 
@@ -990,7 +1002,7 @@ function labelEncounter(t){
 function kindName(k){
   if (k==="basic") return "一般攻擊";
   if (k==="skill") return "技能";
-  if (k==="exe") return "EXE爆發";
+  if (k==="burst") return "機體爆發";
   return k;
 }
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
@@ -1012,18 +1024,31 @@ function setTab(tabKey) {
   render();
 }
 
+function setSubtab(key){
+  document.querySelectorAll(".subtab").forEach(b=>{
+    b.classList.toggle("active", b.dataset.subtab === key);
+  });
+  document.querySelectorAll(".subpage").forEach(p=>{
+    p.classList.toggle("hidden", p.dataset.subpage !== key);
+  });
+}
+
 // DOM events
 window.addEventListener("DOMContentLoaded", ()=>{
-  // tabs
+  // main tabs
   document.querySelectorAll(".tab").forEach(btn=>{
     btn.addEventListener("click", ()=> setTab(btn.dataset.tab));
+  });
+
+  // subtabs
+  document.querySelectorAll(".subtab").forEach(btn=>{
+    btn.addEventListener("click", ()=> setSubtab(btn.dataset.subtab));
   });
 
   // ⚙️ settings modal
   el("btnOpenSettings").addEventListener("click", ()=> el("settingsModal").showModal());
   el("btnCloseSettings").addEventListener("click", ()=> el("settingsModal").close());
 
-  // inside settings modal buttons (same ids)
   el("btnSave").addEventListener("click", saveLocal);
   el("btnLoad").addEventListener("click", ()=>{ if(!loadLocal()) toast("沒有存檔"); render(); });
 
@@ -1067,7 +1092,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
   el("btnAttack").addEventListener("click", ()=> attack("basic"));
   el("btnSkill").addEventListener("click", ()=> attack("skill"));
-  el("btnExe").addEventListener("click", ()=> attack("exe"));
+  el("btnBurst").addEventListener("click", ()=> attack("burst"));
 
   el("btnLootTest").addEventListener("click", ()=>{
     const drops = rollLoot(S.player.lv, "NORMAL");
@@ -1094,7 +1119,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
   el("btnUseBestPotion").addEventListener("click", ()=>{ useBestPotionAuto(); render(); });
 
-  // auto battle
+  // auto battle loop
   el("btnToggleAuto").addEventListener("click", ()=>{
     S.battle.auto = !S.battle.auto;
     setAutoButtonText();
@@ -1107,7 +1132,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     if (S.battle.enemy) attack("basic");
   }, 950);
 
-  // set version
+  // ensure version
   S.meta.version = VERSION;
   saveLocal();
   render();
