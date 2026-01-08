@@ -1,236 +1,68 @@
 <!doctype html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Mecha RPG - V0.0.6</title>
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alloy Horizon V0.0.7</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="title">MECHA RPG</div>
-      <div class="sub">
-        <span id="versionText">V0.0.6</span>
-        <span class="dot">•</span>
-        <button id="btnShowChangelog" class="linkbtn">版本更新</button>
-      </div>
-    </div>
 
-    <nav class="tabs" aria-label="主選單">
-      <button class="tab active" data-tab="play">探索</button>
-      <button class="tab" data-tab="shop">商店</button>
-    </nav>
+<header class="header">
+  <div class="title">Alloy Horizon <span class="ver">V0.0.7</span></div>
+  <div class="gear" id="btnGear">⚙️</div>
+</header>
 
-    <div class="top-right">
-      <button id="btnOpenSettings" class="gear" title="設定 / 存檔">
-        <span class="gear-ico" aria-hidden="true">⚙️</span>
-        <span class="gear-text">設定</span>
-      </button>
-    </div>
-  </header>
+<nav class="topnav">
+  <button data-tab="explore" class="active">探索</button>
+  <button data-tab="shop">商店</button>
+</nav>
 
-  <div class="container tabpage" data-tabpage="play">
-    <main class="grid">
-      <!-- 狀態 -->
-      <section class="card">
-        <h2>機甲狀態</h2>
+<section id="hud">
+  <div class="bar"><span>HP</span><div class="track"><div id="hpBar"></div></div></div>
+  <div class="bar"><span>MP</span><div class="track"><div id="mpBar"></div></div></div>
+  <div class="bar"><span>同心率</span><div class="track"><div id="cohBar"></div></div></div>
+  <div class="bar"><span>EXE</span><div class="track"><div id="exeBar"></div></div></div>
+</section>
 
-        <div class="kv">
-          <div>等級</div><div id="lv">1</div>
-          <div>EXE（升級值）</div><div><span id="exeLvVal">0</span> / <span id="exeLvNeed">100</span></div>
-          <div>金幣</div><div id="gold">0</div>
-          <div>爆發狀態</div><div id="burstState">—</div>
-        </div>
+<div class="tabs">
+  <button data-sub="battle" class="active">戰鬥</button>
+  <button data-sub="equip">裝備</button>
+  <button data-sub="bag">背包</button>
+</div>
 
-        <div class="bars">
-          <div class="bar">
-            <div class="bar-label">HP <span id="hpText"></span></div>
-            <div class="bar-track"><div id="hpBar" class="bar-fill hp"></div></div>
-          </div>
-          <div class="bar">
-            <div class="bar-label">MP <span id="mpText"></span></div>
-            <div class="bar-track"><div id="mpBar" class="bar-fill mp"></div></div>
-          </div>
-          <div class="bar">
-            <div class="bar-label">同心率 <span id="cohText"></span></div>
-            <div class="bar-track"><div id="cohBar" class="bar-fill en"></div></div>
-          </div>
-          <div class="bar">
-            <div class="bar-label">EXE（升級） <span id="exeBarText"></span></div>
-            <div class="bar-track"><div id="exeLvBar" class="bar-fill exe"></div></div>
-          </div>
-        </div>
+<main>
+  <section id="panel-battle" class="panel">
+    <button id="btnAttack">攻擊</button>
+    <button id="btnBurst">機體爆發</button>
+    <pre id="log"></pre>
+  </section>
 
-        <div class="row">
-          <button id="btnRest">維修/休息</button>
-          <button id="btnToggleAuto">自動戰鬥：關</button>
-        </div>
+  <section id="panel-equip" class="panel hidden">
+    <h3>裝備（雙持）</h3>
+    <div id="equipGrid"></div>
+    <h4>套裝進度</h4>
+    <div id="setProgress"></div>
+  </section>
 
-        <div class="stats">
-          <h3>戰鬥屬性（含裝備加成）</h3>
-          <div class="kv">
-            <div>攻擊</div><div id="atk">10</div>
-            <div>防禦</div><div id="def">5</div>
-            <div>暴擊率</div><div id="crit">5%</div>
-            <div>命中</div><div id="acc">90%</div>
-          </div>
-        </div>
+  <section id="panel-bag" class="panel hidden">
+    <h3>背包</h3>
+    <div id="bag"></div>
+  </section>
+</main>
 
-        <div class="hint">
-          ✅ 同心率 = 機體爆發資源　｜　✅ EXE = 升級經驗條（只用來升級）
-        </div>
-      </section>
-
-      <!-- 探索 -->
-      <section class="card">
-        <h2>探索進度</h2>
-
-        <div class="kv">
-          <div>樓層</div><div><span id="floor">1</span> / 10</div>
-          <div>本層進度</div><div id="floorProgress">—</div>
-          <div>下一個遭遇</div><div id="nextEncounter">—</div>
-        </div>
-
-        <!-- ✅ 地圖進度條 -->
-        <div class="mapbar">
-          <div class="bar-label">地圖進度 <span id="mapText">0%</span></div>
-          <div class="bar-track"><div id="mapBar" class="bar-fill map"></div></div>
-        </div>
-
-        <div class="row">
-          <button id="btnExplore">探索下一場</button>
-          <button id="btnChallengeBoss">挑戰 Boss</button>
-          <button id="btnNextFloor">前往下一層</button>
-          <button id="btnResetTower" class="danger">回到第1層</button>
-        </div>
-
-        <div class="hint">
-          ✅ 新增探索事件：補給/陷阱/伏擊/同心共鳴/偶遇商販（隨機）。
-        </div>
-      </section>
-
-      <!-- 裝備/戰鬥/背包 -->
-      <section class="card span2">
-        <div class="subtabs">
-          <button class="subtab active" data-subtab="equip">裝備</button>
-          <button class="subtab" data-subtab="battle">戰鬥</button>
-          <button class="subtab" data-subtab="bag">背包</button>
-        </div>
-
-        <div class="subpage" data-subpage="equip">
-          <h2 style="margin-top:10px;">裝備</h2>
-          <div class="equip-grid" id="equipGrid"></div>
-          <div class="hint">點裝備位可「裝最強」。卸下會回到背包。</div>
-        </div>
-
-        <div class="subpage hidden" data-subpage="battle">
-          <h2 style="margin-top:10px;">戰鬥</h2>
-          <div class="enemy">
-            <div class="enemy-name" id="enemyName">—</div>
-            <div class="kv">
-              <div>等級</div><div id="enemyLv">—</div>
-              <div>HP</div><div id="enemyHpText">—</div>
-            </div>
-            <div class="bar-track"><div id="enemyHpBar" class="bar-fill hp"></div></div>
-          </div>
-
-          <div class="row">
-            <button id="btnAttack">攻擊</button>
-            <button id="btnSkill">技能（耗 MP）</button>
-            <button id="btnBurst">機體爆發（耗 同心率）</button>
-          </div>
-
-          <h3>戰鬥紀錄</h3>
-          <div class="log" id="log"></div>
-        </div>
-
-        <div class="subpage hidden" data-subpage="bag">
-          <h2 style="margin-top:10px;">背包</h2>
-          <div class="row">
-            <button id="btnLootTest">測試掉寶</button>
-            <button id="btnSortBag">整理（稀有度/強度/強化）</button>
-            <button id="btnUseBestPotion">自動用最適回復</button>
-          </div>
-          <div class="hint">✅ 裝備新增：詞綴、強化、分解（回收零件）。</div>
-          <div id="bag" class="bag"></div>
-        </div>
-      </section>
-    </main>
+<div id="gearModal" class="modal hidden">
+  <div class="modal-box">
+    <h3>系統</h3>
+    <button id="btnSave">存檔</button>
+    <button id="btnLoad">讀檔</button>
+    <button id="btnExport">匯出</button>
+    <input type="file" id="importFile">
+    <button id="btnImport">匯入</button>
+    <button id="btnCloseGear">關閉</button>
   </div>
+</div>
 
-  <!-- 商店 -->
-  <div class="container tabpage hidden" data-tabpage="shop">
-    <main class="grid">
-      <section class="card">
-        <h2>商店</h2>
-        <div class="hint">回復品、裝備箱、強化用零件都能買。</div>
-        <div id="shop" class="shop"></div>
-      </section>
-
-      <section class="card">
-        <h2>快速資訊</h2>
-        <div class="kv">
-          <div>金幣</div><div id="gold2">0</div>
-          <div>目前等級</div><div id="lv2">1</div>
-          <div>目前樓層</div><div id="floor2">1</div>
-          <div>零件</div><div id="scrap2">0</div>
-          <div>存檔版本</div><div id="saveVer">—</div>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <!-- Settings Modal -->
-  <dialog id="settingsModal" class="modal">
-    <div class="modal-head">
-      <div class="modal-title">設定 / 存檔</div>
-      <button id="btnCloseSettings" class="linkbtn">關閉</button>
-    </div>
-    <div class="modal-body">
-      <div class="settings-grid">
-        <button id="btnSave">儲存</button>
-        <button id="btnLoad">讀檔</button>
-        <button id="btnExportJson">匯出 JSON</button>
-        <button id="btnExportB64">匯出 Base64</button>
-        <button id="btnImport">匯入</button>
-        <button id="btnHardReset" class="danger">重置</button>
-      </div>
-      <div class="hint">匯出會複製到剪貼簿；匯入會覆蓋目前進度。</div>
-    </div>
-  </dialog>
-
-  <!-- Changelog Modal -->
-  <dialog id="changelogModal" class="modal">
-    <div class="modal-head">
-      <div class="modal-title">版本更新內容</div>
-      <button id="btnCloseChangelog" class="linkbtn">關閉</button>
-    </div>
-    <div class="modal-body">
-      <h3>近三筆</h3>
-      <ul id="changelogRecent"></ul>
-      <hr />
-      <h3>全部</h3>
-      <ul id="changelogAll"></ul>
-    </div>
-  </dialog>
-
-  <!-- Import Modal -->
-  <dialog id="importModal" class="modal">
-    <div class="modal-head">
-      <div class="modal-title">匯入存檔（貼 JSON 或 Base64）</div>
-      <button id="btnCloseImport" class="linkbtn">關閉</button>
-    </div>
-    <div class="modal-body">
-      <textarea id="importText" placeholder="貼上 JSON 或 Base64..." spellcheck="false"></textarea>
-      <div class="row">
-        <button id="btnDoImport">確認匯入</button>
-      </div>
-      <div class="hint">匯入會覆蓋目前進度。建議先匯出備份。</div>
-    </div>
-  </dialog>
-
-  <!-- ✅ 方法一：query string 避免快取 -->
-  <script src="main.js?v=0.0.6"></script>
+<script src="main.js?v=0.0.7"></script>
 </body>
 </html>
