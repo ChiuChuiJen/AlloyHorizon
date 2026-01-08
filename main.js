@@ -1,21 +1,29 @@
 // =====================
-// Mecha RPG V0.0.5 — EXE for Leveling, Coherence for Burst, Subtabs, Unequip, Log newest-first
+// Mecha RPG V0.0.6
+// - Burst uses COHERENCE (同心率) only
+// - EXE is leveling exp only
+// - Burst Buff system (turn-based), affixes + enhance, exploration events + map progress bar
+// - Cache busting via index.html: main.js?v=0.0.6
 // =====================
 
-const VERSION = "V0.0.5";
+const VERSION = "V0.0.6";
 
 const CHANGELOG = [
   {
-    version: "V0.0.5",
+    version: "V0.0.6",
     date: "2026-01-08",
     notes: [
-      "EXE 改為升級專用（擊敗敵人累積 EXE，達門檻自動升級）",
-      "能量改為『同心率』，用於機體爆發（原 EXE 爆發用途）",
-      "裝備/戰鬥/背包合併同一排分頁；戰鬥紀錄改最新在最上面",
-      "裝備欄新增卸下功能（卸下回到背包）"
+      "機體爆發 Buff：消耗同心率啟動，持續回合數，提供增傷/減傷",
+      "裝備系統：詞綴（affix）、強化（+0~+10）、分解回收零件",
+      "探索系統：補給/陷阱/伏擊/同心共鳴/偶遇商販；新增地圖進度條",
+      "固定使用方法一快取處理：index.html 引用 main.js?v=0.0.6"
     ]
   },
+  // 你之前的版本可以留著（略）— 若你要我幫你把 V0.0.5 也補回去我再補
 ];
+
+const LS_KEY = "mecha_rpg_save";
+const TOWER_MAX_FLOOR = 10;
 
 const EQUIP_SLOTS = [
   { key: "head", label: "頭" },
@@ -29,14 +37,21 @@ const EQUIP_SLOTS = [
 ];
 
 const RARITY = [
-  { key: "N",  name: "一般",   mult: 1.0 },
-  { key: "R",  name: "稀有",   mult: 1.25 },
-  { key: "SR", name: "超稀有", mult: 1.55 },
-  { key: "UR", name: "究極",   mult: 1.95 },
+  { key: "N",  name: "一般",   mult: 1.0, scrap: 2 },
+  { key: "R",  name: "稀有",   mult: 1.25, scrap: 4 },
+  { key: "SR", name: "超稀有", mult: 1.55, scrap: 8 },
+  { key: "UR", name: "究極",   mult: 1.95, scrap: 16 },
 ];
 
-const LS_KEY = "mecha_rpg_save";
-const TOWER_MAX_FLOOR = 10;
+const AFFIX_POOL = [
+  { key:"overclock",  name:"超頻",   w: 18, stats:(p)=>({ atk: Math.floor(p*0.75) }) },
+  { key:"fortified",  name:"加固",   w: 18, stats:(p)=>({ def: Math.floor(p*0.75) }) },
+  { key:"coreplus",   name:"核心增幅", w: 14, stats:(p)=>({ hpMax: Math.floor(p*0.40) }) },
+  { key:"databank",   name:"資料庫", w: 14, stats:(p)=>({ mpMax: Math.floor(p*0.25) }) },
+  { key:"synclink",   name:"同心連結", w: 14, stats:(p)=>({ cohMax: Math.floor(p*0.30) }) },
+  { key:"marksman",   name:"精準",   w: 11, stats:(p)=>({ acc: round4((p/7000)*1.0) }) },
+  { key:"assassin",   name:"刺殺",   w: 11, stats:(p)=>({ crit: round4((p/7000)*1.2) }) },
+];
 
 function defaultFloorPlan() {
   return { normalsDone:0, normalNeed:3, eliteDone:false, miniBossDone:false, bossDone:false, lastEncounter:null };
@@ -80,18 +95,14 @@ function mkConsumable(name, kind, amount, price) {
   return { id: cryptoId(), type:"consumable", name, kind, amount, price };
 }
 
-/**
- * ✅ 新定義：
- * - exeLv: 升級用 EXE（取代原本 xp）
- * - coh:  同心率（取代原本 en）
- */
 function newGameState() {
   return {
     meta: { version: VERSION, createdAt: Date.now(), updatedAt: Date.now() },
     player: {
       lv: 1,
-      exeLv: 0,   // ✅ 升級專用
+      exeLv: 0,   // ✅ EXE = 升級值（經驗）
       gold: 120,
+      scrap: 0,   // ✅ 零件（分解/強化用）
       base: { atk: 10, def: 5, crit: 0.05, acc: 0.90 },
 
       hp: 120, hpMax: 120,
@@ -106,27 +117,35 @@ function newGameState() {
       ],
     },
     tower: { floor: 1, floorState: defaultFloorPlan() },
-    battle: { enemy: null, enemyType: null, auto: false, log: [] }
+    battle: {
+      enemy: null,
+      enemyType: null,
+      auto: false,
+      log: [],
+      // ✅ Burst Buff（同心率啟動）
+      burst: { active:false, turns:0, atkMult:1.0, dmgTakenMult:1.0 }
+    }
   };
 }
 
 let S = loadOrInit();
 migrateIfNeeded();
 
+// -------------------- Migration --------------------
 function migrateIfNeeded() {
   if (!S.meta) S.meta = { version: VERSION, createdAt: Date.now(), updatedAt: Date.now() };
   if (!S.meta.version) S.meta.version = VERSION;
 
   if (!S.player) S.player = newGameState().player;
 
-  // ✅ 舊版兼容：xp -> exeLv
+  // xp -> exeLv
   if (typeof S.player.exeLv !== "number") {
     if (typeof S.player.xp === "number") S.player.exeLv = S.player.xp;
     else S.player.exeLv = 0;
   }
   delete S.player.xp;
 
-  // ✅ 舊版兼容：en -> coh
+  // en -> coh
   if (typeof S.player.coh !== "number") {
     if (typeof S.player.en === "number") S.player.coh = S.player.en;
     else S.player.coh = 0;
@@ -137,8 +156,11 @@ function migrateIfNeeded() {
   }
   delete S.player.en; delete S.player.enMax;
 
+  if (typeof S.player.scrap !== "number") S.player.scrap = 0;
+
   if (!S.player.equips) S.player.equips = Object.fromEntries(EQUIP_SLOTS.map(s => [s.key, null]));
   for (const s of EQUIP_SLOTS) if (!(s.key in S.player.equips)) S.player.equips[s.key] = null;
+
   if (!Array.isArray(S.player.bag)) S.player.bag = [];
 
   if (!S.tower) S.tower = newGameState().tower;
@@ -146,6 +168,16 @@ function migrateIfNeeded() {
   if (!S.tower.floorState) S.tower.floorState = defaultFloorPlan();
 
   if (!S.battle) S.battle = newGameState().battle;
+  if (!S.battle.burst) S.battle.burst = { active:false, turns:0, atkMult:1.0, dmgTakenMult:1.0 };
+
+  // equip fields migration (enhance/affix)
+  for (const it of S.player.bag.concat(Object.values(S.player.equips).filter(Boolean))) {
+    if (it?.type === "equip") {
+      if (typeof it.enh !== "number") it.enh = 0;
+      if (!Array.isArray(it.affixes)) it.affixes = [];
+      if (!it.basePower && it.power) it.basePower = it.power; // preserve
+    }
+  }
 
   applyDerivedMax();
 }
@@ -168,12 +200,6 @@ function loadLocal() {
   } catch { return false; }
 }
 
-function loadOrInit() {
-  const raw = localStorage.getItem(LS_KEY);
-  if (!raw) return newGameState();
-  try { return JSON.parse(raw); } catch { return newGameState(); }
-}
-
 // Export/Import
 function exportJSON() { copyToClipboard(JSON.stringify(S)); toast("JSON 已複製到剪貼簿"); }
 function exportB64() {
@@ -190,12 +216,19 @@ function importFromText(text) {
   return JSON.parse(json);
 }
 
-// ✅ EXE(升級)門檻
+function loadOrInit() {
+  const raw = localStorage.getItem(LS_KEY);
+  if (!raw) return newGameState();
+  try { return JSON.parse(raw); } catch { return newGameState(); }
+}
+
+// -------------------- Core math --------------------
 function exeNeed(lv) {
   return Math.floor(120 + (lv - 1) * 70 + Math.pow(lv - 1, 1.35) * 25);
 }
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
+// recompute max hp/mp/coh with equips
 function applyDerivedMax() {
   const p = S.player;
   let hpBonus = 0, mpBonus = 0, cohBonus = 0;
@@ -203,10 +236,10 @@ function applyDerivedMax() {
   for (const k of Object.keys(p.equips)) {
     const it = p.equips[k];
     if (!it || it.type !== "equip") continue;
-    hpBonus += it.stats.hpMax || 0;
-    mpBonus += it.stats.mpMax || 0;
-    // 兼容：舊裝備若有 enMax 就算到 cohMax
-    cohBonus += (it.stats.cohMax || 0) + (it.stats.enMax || 0);
+    const st = calcEquipFinalStats(it);
+    hpBonus += st.hpMax || 0;
+    mpBonus += st.mpMax || 0;
+    cohBonus += st.cohMax || 0;
   }
 
   const baseHp = 120 + (p.lv - 1) * 20;
@@ -233,10 +266,11 @@ function calcTotalStats() {
   for (const k of Object.keys(p.equips)) {
     const it = p.equips[k];
     if (!it) continue;
-    atk  += it.stats.atk || 0;
-    def += it.stats.def || 0;
-    crit += it.stats.crit || 0;
-    acc  += it.stats.acc || 0;
+    const st = calcEquipFinalStats(it);
+    atk  += st.atk || 0;
+    def  += st.def || 0;
+    crit += st.crit || 0;
+    acc  += st.acc || 0;
   }
 
   crit = clamp(crit, 0, 0.40);
@@ -244,21 +278,36 @@ function calcTotalStats() {
   return { atk, def, crit, acc };
 }
 
-function rest() {
+// -------------------- Burst system (uses COH only) --------------------
+function burstCost(){ return 40; }
+function startBurst() {
   const p = S.player;
-  applyDerivedMax();
-  p.hp = clamp(p.hp + Math.floor(p.hpMax * 0.25), 0, p.hpMax);
-  p.mp = clamp(p.mp + Math.floor(p.mpMax * 0.35), 0, p.mpMax);
-  p.coh = clamp(p.coh + Math.floor(p.cohMax * 0.35), 0, p.cohMax);
-  log(`維修完成：HP/MP/同心率回復（不超過最大值）`);
-  saveLocal();
+  const b = S.battle.burst;
+  if (b.active) { toast("爆發已在啟動中"); return false; }
+  if (p.coh < burstCost()) { toast(`同心率不足（需 ${burstCost()}）`); return false; }
+  p.coh -= burstCost();
+
+  b.active = true;
+  b.turns = 3;          // ✅ 持續 3 回合（你的攻擊回合計）
+  b.atkMult = 1.35;     // ✅ 增傷
+  b.dmgTakenMult = 0.82;// ✅ 減傷
+  log(`🔥 機體爆發啟動！持續 ${b.turns} 回合（同心率-${burstCost()}）`);
+  return true;
+}
+function tickBurstAfterPlayerAction(){
+  const b = S.battle.burst;
+  if (!b.active) return;
+  b.turns -= 1;
+  if (b.turns <= 0) {
+    b.active = false;
+    b.turns = 0;
+    b.atkMult = 1.0;
+    b.dmgTakenMult = 1.0;
+    log("🔥 爆發結束。");
+  }
 }
 
-// Tower
-function canGoNextFloor() {
-  const fs = S.tower.floorState;
-  return fs.bossDone && S.tower.floor < TOWER_MAX_FLOOR;
-}
+// -------------------- Exploration --------------------
 function nextEncounterHint() {
   const fs = S.tower.floorState;
   const t = nextEncounterTypeForFloorState(fs);
@@ -266,17 +315,27 @@ function nextEncounterHint() {
   if (t === "BOSS_READY") return "Boss（可挑戰）";
   if (t === "MINI") return "Mini Boss";
   if (!fs.eliteDone && fs.normalsDone >= 1 && Math.random() < 0.30) return "可能出現 菁英";
-  return "一般怪";
+  return "一般怪 / 事件";
 }
+
 function exploreNext() {
   if (S.battle.enemy) { toast("正在戰鬥中"); return; }
 
   const fs = S.tower.floorState;
   if (fs.bossDone) { toast("本層已通關，請前往下一層"); return; }
 
+  // ✅ 事件機率（不影響Boss流程）
   const planType = nextEncounterTypeForFloorState(fs);
   if (planType === "MINI") { spawnTowerEnemy("MINI"); return; }
   if (planType === "BOSS_READY") { toast("本層已可挑戰 Boss（點『挑戰 Boss』）"); return; }
+
+  // 25% 事件（一般探索才觸發）
+  if (Math.random() < 0.25) {
+    doExploreEvent();
+    saveLocal();
+    render();
+    return;
+  }
 
   if (!fs.eliteDone && fs.normalsDone >= 1 && Math.random() < 0.30) {
     fs.eliteDone = true;
@@ -285,6 +344,66 @@ function exploreNext() {
   }
   spawnTowerEnemy("NORMAL");
 }
+
+function doExploreEvent() {
+  const p = S.player;
+  applyDerivedMax();
+
+  const events = [
+    { w: 26, fn: ()=>{ // supply
+      const hp = Math.floor(p.hpMax*0.18);
+      const mp = Math.floor(p.mpMax*0.15);
+      p.hp = clamp(p.hp+hp, 0, p.hpMax);
+      p.mp = clamp(p.mp+mp, 0, p.mpMax);
+      log(`🧰 補給站：HP+${hp} MP+${mp}`);
+    }},
+    { w: 18, fn: ()=>{ // trap
+      const dmg = Math.max(1, Math.floor(p.hpMax*(0.10 + Math.random()*0.08)));
+      p.hp = clamp(p.hp - dmg, 0, p.hpMax);
+      log(`⚠️ 陷阱爆裂：HP-${dmg}`);
+      if (p.hp <= 0) {
+        p.hp = Math.max(1, Math.floor(p.hpMax*0.30));
+        p.gold = Math.max(0, p.gold - 20);
+        if (S.battle.auto) {
+          S.battle.auto = false;
+          setAutoButtonText();
+          log("⛔ 自動戰鬥已停止（死亡觸發）");
+        }
+        log("⚠️ 機甲被擊破（事件），已緊急維修到 30% HP");
+      }
+    }},
+    { w: 18, fn: ()=>{ // coherence surge
+      const add = Math.floor(p.cohMax*(0.22 + Math.random()*0.12));
+      p.coh = clamp(p.coh+add, 0, p.cohMax);
+      log(`🧬 同心共鳴：同心率+${add}`);
+    }},
+    { w: 14, fn: ()=>{ // scrap cache
+      const s = 6 + randInt(0, 8) + S.tower.floor*2;
+      p.scrap += s;
+      log(`🧩 零件箱：零件+${s}`);
+    }},
+    { w: 12, fn: ()=>{ // ambush
+      log("🟥 伏擊！遭遇菁英單位");
+      S.tower.floorState.eliteDone = true;
+      spawnTowerEnemy("ELITE");
+    }},
+    { w: 12, fn: ()=>{ // roaming merchant
+      const g = 30 + randInt(0, 30);
+      p.gold += g;
+      log(`🛒 偶遇商販：獲得金幣+${g}`);
+    }},
+  ];
+
+  const ev = weightedPick(events);
+  ev.fn();
+}
+
+// -------------------- Tower / Enemies --------------------
+function canGoNextFloor() {
+  const fs = S.tower.floorState;
+  return fs.bossDone && S.tower.floor < TOWER_MAX_FLOOR;
+}
+
 function challengeBoss() {
   if (S.battle.enemy) { toast("正在戰鬥中"); return; }
   const fs = S.tower.floorState;
@@ -292,6 +411,7 @@ function challengeBoss() {
   if (fs.bossDone) { toast("本層Boss已擊敗"); return; }
   spawnTowerEnemy("BOSS");
 }
+
 function goNextFloor() {
   if (!canGoNextFloor()) { toast("需要先擊敗本層 Boss 才能前往下一層"); return; }
   S.tower.floor += 1;
@@ -299,6 +419,7 @@ function goNextFloor() {
   log(`➡️ 前往第 ${S.tower.floor} 層`);
   saveLocal(); render();
 }
+
 function resetTower() {
   S.tower.floor = 1;
   S.tower.floorState = defaultFloorPlan();
@@ -345,7 +466,7 @@ function spawnTowerEnemy(type) {
   render();
 }
 
-// Combat
+// -------------------- Combat --------------------
 function attack(kind="basic") {
   const p = S.player;
   const e = S.battle.enemy;
@@ -358,9 +479,12 @@ function attack(kind="basic") {
     if (p.mp < 12) { toast("MP 不足"); return; }
     p.mp -= 12;
   }
-  if (kind === "burst") { // ✅ 爆發耗同心率
-    if (p.coh < 30) { toast("同心率不足（需 30）"); return; }
-    p.coh -= 30;
+
+  // ✅ 爆發按鈕：是「啟動爆發狀態」，不是直接加倍率攻擊
+  if (kind === "burst") {
+    if (!startBurst()) return;
+    saveLocal(); render();
+    return;
   }
 
   const hit = Math.random() < st.acc;
@@ -368,7 +492,9 @@ function attack(kind="basic") {
 
   let mult = 1.0;
   if (kind === "skill") mult = 1.40;
-  if (kind === "burst") mult = 2.15;
+
+  // ✅ Burst Buff 影響你的傷害
+  if (S.battle.burst.active) mult *= S.battle.burst.atkMult;
 
   const isCrit = Math.random() < st.crit;
   const critMult = isCrit ? 1.65 : 1.0;
@@ -378,12 +504,16 @@ function attack(kind="basic") {
 
   e.hp = clamp(e.hp - dmg, 0, e.hpMax);
 
-  // ✅ 資源回復：同心率慢慢回；升級EXE由勝利給
-  p.coh = clamp(p.coh + (kind==="burst" ? 0 : 3), 0, p.cohMax);
+  // 同心率自然回（不和 EXE 混）
+  p.coh = clamp(p.coh + 3, 0, p.cohMax);
 
   log(`你使用${kindName(kind)}造成 ${dmg} 傷害${isCrit ? "（暴擊）" : ""}！`);
 
   if (e.hp <= 0) { winBattle(); render(); return; }
+
+  // ✅ 每次你完成一次「攻擊回合」後，消耗爆發回合數
+  tickBurstAfterPlayerAction();
+
   enemyTurn();
   render();
 }
@@ -397,10 +527,12 @@ function enemyTurn() {
   const st = calcTotalStats();
 
   const raw = Math.floor(e.atk * (0.9 + Math.random() * 0.3));
-  const dmg = Math.max(1, raw - st.def);
+  let dmg = Math.max(1, raw - st.def);
+
+  // ✅ Burst Buff 減傷（敵方對你）
+  if (S.battle.burst.active) dmg = Math.max(1, Math.floor(dmg * S.battle.burst.dmgTakenMult));
 
   p.hp = clamp(p.hp - dmg, 0, p.hpMax);
-
   log(`敵人反擊，造成你 ${dmg} 傷害。`);
 
   if (p.hp <= 0) {
@@ -408,15 +540,20 @@ function enemyTurn() {
     p.hp = Math.max(1, Math.floor(p.hpMax * 0.30));
     p.gold = Math.max(0, p.gold - 25);
 
-    // ✅ 死亡停止自動戰鬥
+    // 死亡停止自動戰鬥
     if (S.battle.auto) {
       S.battle.auto = false;
       setAutoButtonText();
       log("⛔ 自動戰鬥已停止（死亡觸發）");
     }
 
-    // ✅ 同心率不歸零（你沒要求重置），這裡不動 p.coh
-    // ✅ EXE(升級)也不重置
+    // ✅ EXE 不歸零、同心率不強制歸零（你要求不要混在一起）
+    // Burst 狀態結束
+    S.battle.burst.active = false;
+    S.battle.burst.turns = 0;
+    S.battle.burst.atkMult = 1.0;
+    S.battle.burst.dmgTakenMult = 1.0;
+
     S.battle.enemy = null;
     S.battle.enemyType = null;
     saveLocal();
@@ -428,14 +565,15 @@ function winBattle() {
   const e = S.battle.enemy;
   const et = S.battle.enemyType || "NORMAL";
 
-  // ✅ EXE(升級)取代舊 xp
-  const gainEXE  = Math.floor((55 + e.lv * 28) * exeMultByEncounter(et));
+  const gainEXE  = Math.floor((55 + e.lv * 28) * exeMultByEncounter(et)); // ✅ EXE only
   const gainGold = Math.floor((15 + e.lv * 9)  * goldMultByEncounter(et));
+  const gainScrap = Math.floor((2 + e.lv * 0.6) * scrapMultByEncounter(et));
 
   p.exeLv += gainEXE;
   p.gold += gainGold;
+  p.scrap += gainScrap;
 
-  log(`✅ 擊敗 ${e.name}（${labelEncounter(et)}）！EXE+${gainEXE} 金幣+${gainGold}`);
+  log(`✅ 擊敗 ${e.name}（${labelEncounter(et)}）！EXE+${gainEXE} 金幣+${gainGold} 零件+${gainScrap}`);
 
   const drops = rollLoot(e.lv, et);
   for (const it of drops) p.bag.push(it);
@@ -455,19 +593,6 @@ function winBattle() {
   saveLocal();
 }
 
-function exeMultByEncounter(et){
-  if (et==="BOSS") return 2.2;
-  if (et==="MINI") return 1.6;
-  if (et==="ELITE") return 1.35;
-  return 1.0;
-}
-function goldMultByEncounter(et){
-  if (et==="BOSS") return 2.0;
-  if (et==="MINI") return 1.5;
-  if (et==="ELITE") return 1.25;
-  return 1.0;
-}
-
 function levelUpIfNeeded() {
   const p = S.player;
   let need = exeNeed(p.lv);
@@ -481,7 +606,26 @@ function levelUpIfNeeded() {
   }
 }
 
-// Loot
+function exeMultByEncounter(et){
+  if (et==="BOSS") return 2.2;
+  if (et==="MINI") return 1.6;
+  if (et==="ELITE") return 1.35;
+  return 1.0;
+}
+function goldMultByEncounter(et){
+  if (et==="BOSS") return 2.0;
+  if (et==="MINI") return 1.5;
+  if (et==="ELITE") return 1.25;
+  return 1.0;
+}
+function scrapMultByEncounter(et){
+  if (et==="BOSS") return 1.8;
+  if (et==="MINI") return 1.4;
+  if (et==="ELITE") return 1.2;
+  return 1.0;
+}
+
+// -------------------- Loot / Equip generation --------------------
 function rollLoot(enemyLv, encounterType="NORMAL") {
   const out = [];
 
@@ -504,7 +648,6 @@ function rollLoot(enemyLv, encounterType="NORMAL") {
   if (Math.random() < consChance) out.push(genConsumable(enemyLv));
 
   if (encounterType === "BOSS") {
-    log("📦 Boss 戰利品箱已開啟！");
     out.push(genEquip(enemyLv + 2, "BOSS"));
     if (Math.random() < 0.70) out.push(genConsumable(enemyLv + 2));
   }
@@ -524,23 +667,6 @@ function genConsumable(lv) {
   return mkConsumable(t.name, t.kind, amount, price);
 }
 
-function genEquip(lv, encounterType="NORMAL") {
-  const slot = pick(EQUIP_SLOTS);
-  const r = rollRarity(encounterType);
-  const power = Math.max(1, Math.floor((lv * 2 + randInt(0, lv+4)) * r.mult));
-  const stats = baseStatsBySlot(slot.key, power);
-
-  return {
-    id: cryptoId(),
-    type: "equip",
-    slot: slot.key,
-    rarity: r.key,
-    name: `${rarityName(r.key)} ${slotName(slot.key)}-MK${randInt(1, 9)}（+${power}）`,
-    power,
-    stats,
-  };
-}
-
 function rollRarity(encounterType="NORMAL") {
   const x = Math.random();
   const bonus =
@@ -553,6 +679,48 @@ function rollRarity(encounterType="NORMAL") {
   if (y < 0.85) return RARITY[1];
   if (y < 0.96) return RARITY[2];
   return RARITY[3];
+}
+
+function genEquip(lv, encounterType="NORMAL") {
+  const slot = pick(EQUIP_SLOTS);
+  const r = rollRarity(encounterType);
+  const basePower = Math.max(1, Math.floor((lv * 2 + randInt(0, lv+4)) * r.mult));
+
+  const affixCount =
+    r.key==="UR" ? randInt(1, 2) :
+    r.key==="SR" ? (Math.random()<0.55 ? 1 : 0) :
+    r.key==="R"  ? (Math.random()<0.25 ? 1 : 0) : 0;
+
+  const affixes = [];
+  for (let i=0;i<affixCount;i++){
+    const a = weightedPick(AFFIX_POOL);
+    if (affixes.some(x=>x.key===a.key)) continue;
+    affixes.push({ key:a.key, name:a.name });
+  }
+
+  const stats = baseStatsBySlot(slot.key, basePower);
+
+  const enh = 0;
+  const name = buildEquipName(r.key, slot.key, basePower, enh, affixes);
+
+  return {
+    id: cryptoId(),
+    type: "equip",
+    slot: slot.key,
+    rarity: r.key,
+    basePower,
+    power: basePower, // display convenience
+    enh,
+    affixes,
+    name,
+    stats, // base stats (before affix+enh scaling)
+  };
+}
+
+function buildEquipName(rarityKey, slotKey, basePower, enh, affixes){
+  const aff = affixes?.length ? `【${affixes.map(a=>a.name).join("・")}】` : "";
+  const enhText = enh>0 ? ` +${enh}` : "";
+  return `${rarityName(rarityKey)}${aff} ${slotName(slotKey)}-MK${randInt(1, 9)}（強度${basePower}${enhText}）`;
 }
 
 function baseStatsBySlot(slotKey, power){
@@ -587,7 +755,42 @@ function baseStatsBySlot(slotKey, power){
   return s;
 }
 
-// Inventory actions
+// final equip stats = base stats * (enh scaling) + affix stats
+function calcEquipFinalStats(it){
+  const base = it.stats || {};
+  const enh = it.enh || 0;
+
+  // 強化倍率：+0~+10
+  const mult = 1 + enh * 0.06; // +10 ≈ +60%
+  const st = {
+    atk: Math.floor((base.atk||0)*mult),
+    def: Math.floor((base.def||0)*mult),
+    hpMax: Math.floor((base.hpMax||0)*mult),
+    mpMax: Math.floor((base.mpMax||0)*mult),
+    cohMax: Math.floor((base.cohMax||0)*mult),
+    crit: base.crit || 0,
+    acc: base.acc || 0,
+  };
+
+  // affix add
+  if (Array.isArray(it.affixes)) {
+    for (const a of it.affixes) {
+      const tmpl = AFFIX_POOL.find(x=>x.key===a.key);
+      if (!tmpl) continue;
+      const add = tmpl.stats(it.basePower || it.power || 1);
+      for (const k of Object.keys(add)) {
+        if (k === "crit" || k === "acc") st[k] = (st[k] || 0) + (add[k] || 0);
+        else st[k] = (st[k] || 0) + (add[k] || 0);
+      }
+    }
+  }
+
+  st.crit = clamp(st.crit||0, 0, 0.20);
+  st.acc  = clamp(st.acc||0,  0, 0.12);
+  return st;
+}
+
+// -------------------- Inventory actions --------------------
 function equipItemById(itemId) {
   const p = S.player;
   const it = p.bag.find(x => x.id === itemId);
@@ -610,11 +813,10 @@ function equipBest(slotKey) {
   const p = S.player;
   const cand = p.bag.filter(it => it.type==="equip" && it.slot===slotKey);
   if (!cand.length) { toast("背包沒有可用裝備"); return; }
-  cand.sort((a,b)=> (b.power - a.power));
+  cand.sort((a,b)=> (scoreEquip(b) - scoreEquip(a)));
   equipItemById(cand[0].id);
 }
 
-// ✅ 卸下裝備
 function unequip(slotKey){
   const p = S.player;
   const cur = p.equips[slotKey];
@@ -637,6 +839,55 @@ function dropItem(itemId) {
   render();
 }
 
+// ✅ 分解裝備 → 零件
+function dismantleEquip(itemId){
+  const p = S.player;
+  const it = p.bag.find(x=>x.id===itemId);
+  if (!it || it.type!=="equip") return;
+
+  const r = RARITY.find(x=>x.key===it.rarity) || RARITY[0];
+  const base = r.scrap;
+  const plus = Math.floor((it.basePower||it.power||1) / 10) + (it.enh||0)*2;
+  const get = Math.max(1, base + plus);
+
+  p.scrap += get;
+  p.bag = p.bag.filter(x=>x.id!==itemId);
+  log(`🧩 分解：${it.name} → 零件+${get}`);
+  saveLocal(); render();
+}
+
+// ✅ 強化裝備（+0~+10）
+function enhanceEquip(itemId){
+  const p = S.player;
+  const it = p.bag.find(x=>x.id===itemId);
+  if (!it || it.type!=="equip") return;
+  const enh = it.enh||0;
+  if (enh >= 10) { toast("已達強化上限 +10"); return; }
+
+  const costGold = 30 + (enh+1)*22 + Math.floor((it.basePower||it.power||1)*0.25);
+  const costScrap = 4 + (enh+1)*3;
+
+  if (p.gold < costGold) { toast(`金幣不足（需 ${costGold}）`); return; }
+  if (p.scrap < costScrap) { toast(`零件不足（需 ${costScrap}）`); return; }
+
+  p.gold -= costGold;
+  p.scrap -= costScrap;
+
+  it.enh = enh + 1;
+  it.power = (it.basePower||it.power||1) + it.enh; // display
+  it.name = buildEquipName(it.rarity, it.slot, (it.basePower||it.power||1), it.enh, it.affixes);
+
+  log(`🔧 強化成功：${it.name}（-金幣${costGold} / -零件${costScrap}）`);
+  applyDerivedMax();
+  saveLocal(); render();
+}
+
+function scoreEquip(it){
+  const st = calcEquipFinalStats(it);
+  const rRank = ({N:0,R:1,SR:2,UR:3}[it.rarity] ?? 0);
+  return (st.atk||0)*1.2 + (st.def||0)*1.0 + (st.hpMax||0)*0.12 + (st.cohMax||0)*0.10 + rRank*80 + (it.enh||0)*45;
+}
+
 function useConsumable(itemId) {
   const p = S.player;
   const it = p.bag.find(x => x.id === itemId);
@@ -646,14 +897,12 @@ function useConsumable(itemId) {
   if (it.kind === "heal_hp") p.hp = clamp(p.hp + it.amount, 0, p.hpMax);
   if (it.kind === "heal_mp") p.mp = clamp(p.mp + it.amount, 0, p.mpMax);
   if (it.kind === "heal_coh") p.coh = clamp(p.coh + it.amount, 0, p.cohMax);
-  if (it.kind === "gain_exe") p.exeLv = clamp(p.exeLv + it.amount, 0, exeNeed(p.lv));
+  if (it.kind === "gain_exe") p.exeLv = clamp(p.exeLv + it.amount, 0, exeNeed(p.lv)); // ✅ EXE only
 
   p.bag = p.bag.filter(x => x.id !== itemId);
   log(`使用：${it.name}（效果：${consumableDesc(it)}）`);
 
-  // 如果用道具把 EXE 補滿，允許升級
   levelUpIfNeeded();
-
   saveLocal();
   render();
 }
@@ -677,7 +926,7 @@ function useBestPotionAuto() {
   useConsumable(cands[0].id);
 }
 
-// Shop
+// -------------------- Shop --------------------
 function getShopList() {
   const p = S.player;
   const lv = p.lv;
@@ -685,16 +934,19 @@ function getShopList() {
   const potMp    = mkConsumable("MP 注入劑", "heal_mp", 28 + lv*3, 40 + lv*3);
   const potCoh   = mkConsumable("同心注入劑", "heal_coh", 26 + lv*3, 28 + lv*2);
   const exeNeedle= mkConsumable("資料注入針", "gain_exe", 18 + lv*2, 25 + lv*3);
+
   return [
     { kind:"buy_item", item: potSmall, label:"回復 HP" },
     { kind:"buy_item", item: potMp,    label:"回復 MP" },
     { kind:"buy_item", item: potCoh,   label:"回復 同心率" },
     { kind:"buy_item", item: exeNeedle,label:"增加 EXE（升級值）" },
     { kind:"buy_box",  price: 60 + lv*8, label:"基礎裝備箱（隨機 1 件裝備）" },
+    { kind:"buy_scrap", price: 40 + lv*4, amount: 10 + lv*2, label:"購買零件（強化用）" },
   ];
 }
 function buyShopEntry(entry) {
   const p = S.player;
+
   if (entry.kind === "buy_item") {
     const price = entry.item.price;
     if (p.gold < price) { toast("金幣不足"); return; }
@@ -711,10 +963,18 @@ function buyShopEntry(entry) {
     p.bag.push(eq);
     log(`購買：裝備箱，獲得 ${eq.name}`);
     saveLocal(); render();
+    return;
+  }
+  if (entry.kind === "buy_scrap") {
+    if (p.gold < entry.price) { toast("金幣不足"); return; }
+    p.gold -= entry.price;
+    p.scrap += entry.amount;
+    log(`購買：零件+${entry.amount}（-${entry.price}G）`);
+    saveLocal(); render();
   }
 }
 
-// UI
+// -------------------- UI rendering --------------------
 const el = (id)=>document.getElementById(id);
 
 function render() {
@@ -730,19 +990,23 @@ function render() {
   el("lv2").textContent = p.lv;
   el("saveVer").textContent = S.meta.version || VERSION;
   el("floor2").textContent = S.tower.floor;
+  el("scrap2").textContent = p.scrap;
 
-  // ✅ 升級EXE顯示
+  // EXE leveling display
   el("exeLvVal").textContent = p.exeLv;
   el("exeLvNeed").textContent = exeNeed(p.lv);
 
-  // ✅ 即時條
-  setBar("hp", p.hp, p.hpMax, "hpBar", "hpText");
-  setBar("mp", p.mp, p.mpMax, "mpBar", "mpText");
-  setBar("coh", p.coh, p.cohMax, "cohBar", "cohText");
+  // Bars
+  setBar(p.hp, p.hpMax, "hpBar", "hpText");
+  setBar(p.mp, p.mpMax, "mpBar", "mpText");
+  setBar(p.coh, p.cohMax, "cohBar", "cohText");
 
-  // EXE 升級條（比例= exeLv / need）
   el("exeBarText").textContent = `${p.exeLv} / ${exeNeed(p.lv)}`;
   el("exeLvBar").style.width = `${(p.exeLv / exeNeed(p.lv)) * 100}%`;
+
+  // Burst state text
+  const b = S.battle.burst;
+  el("burstState").textContent = b.active ? `啟動中（剩 ${b.turns} 回合）` : "—";
 
   const st = calcTotalStats();
   el("atk").textContent = st.atk;
@@ -763,10 +1027,20 @@ function render() {
   setAutoButtonText();
 }
 
-function setBar(prefix, cur, max, barId, textId) {
+function setBar(cur, max, barId, textId) {
   el(textId).textContent = `${cur} / ${max}`;
   const pct = max<=0 ? 0 : (cur/max)*100;
   el(barId).style.width = `${pct}%`;
+}
+
+function floorMapProgressPercent(){
+  const fs = S.tower.floorState;
+  // 權重：一般 60%（3隻）、菁英 10%、mini 10%、boss 20%
+  const normalP = clamp(fs.normalsDone / fs.normalNeed, 0, 1) * 60;
+  const eliteP  = fs.eliteDone ? 10 : 0;
+  const miniP   = fs.miniBossDone ? 10 : 0;
+  const bossP   = fs.bossDone ? 20 : 0;
+  return Math.floor(normalP + eliteP + miniP + bossP);
 }
 
 function renderFloorInfo() {
@@ -780,6 +1054,10 @@ function renderFloorInfo() {
 
   el("floorProgress").textContent = `${normalLine}｜${eliteLine}｜${miniLine}｜${bossLine}`;
   el("nextEncounter").textContent = nextEncounterHint();
+
+  const pct = floorMapProgressPercent();
+  el("mapText").textContent = `${pct}%`;
+  el("mapBar").style.width = `${pct}%`;
 
   el("btnChallengeBoss").disabled = !fs.miniBossDone || fs.bossDone || !!S.battle.enemy;
   el("btnNextFloor").disabled = !canGoNextFloor() || !!S.battle.enemy;
@@ -802,7 +1080,7 @@ function renderEquip() {
         <div class="badge">${it ? `已裝備` : `未裝備`}</div>
       </div>
       <div class="meta">${it ? it.name : "（—）"}</div>
-      <div class="meta">${it ? formatEquipStats(it.stats) : ""}</div>
+      <div class="meta">${it ? formatEquipStats(calcEquipFinalStats(it)) : ""}</div>
       <div class="actions">
         <button class="btnBest">裝最強</button>
         <button class="btnUnequip danger">卸下</button>
@@ -812,7 +1090,6 @@ function renderEquip() {
     div.querySelector(".btnBest").addEventListener("click", ()=> equipBest(s.key));
     div.querySelector(".btnUnequip").addEventListener("click", ()=> unequip(s.key));
 
-    // 點整個格也可以裝最強（保留你的習慣）
     div.addEventListener("click", (ev)=>{
       if (ev.target.closest("button")) return;
       equipBest(s.key);
@@ -852,22 +1129,29 @@ function renderBag() {
     d.className = "item";
 
     if (it.type === "equip") {
+      const st = calcEquipFinalStats(it);
+      const enh = it.enh||0;
+      const gCost = enhanceGoldCost(it);
+      const sCost = enhanceScrapCost(it);
       d.innerHTML = `
         <div class="top">
           <div class="name">${it.name}</div>
-          <div class="badge">${rarityName(it.rarity)} • 強度 ${it.power}</div>
+          <div class="badge">${rarityName(it.rarity)} • +${enh}</div>
         </div>
         <div class="desc">
           部位：${slotName(it.slot)}<br/>
-          ${formatEquipStats(it.stats)}
+          ${formatEquipStats(st)}<br/>
+          詞綴：${it.affixes?.length ? it.affixes.map(a=>a.name).join("、") : "無"}
         </div>
         <div class="btns">
           <button class="btnEquip">裝備</button>
-          <button class="danger btnDrop">丟棄</button>
+          <button class="btnEnh">強化（-${gCost}G / -${sCost}零件）</button>
+          <button class="btnDis">分解（回收零件）</button>
         </div>
       `;
       d.querySelector(".btnEquip").addEventListener("click", ()=> equipItemById(it.id));
-      d.querySelector(".btnDrop").addEventListener("click", ()=> dropItem(it.id));
+      d.querySelector(".btnEnh").addEventListener("click", ()=> enhanceEquip(it.id));
+      d.querySelector(".btnDis").addEventListener("click", ()=> dismantleEquip(it.id));
     } else {
       d.innerHTML = `
         <div class="top">
@@ -886,6 +1170,15 @@ function renderBag() {
 
     wrap.appendChild(d);
   }
+}
+
+function enhanceGoldCost(it){
+  const enh = it.enh||0;
+  return 30 + (enh+1)*22 + Math.floor((it.basePower||it.power||1)*0.25);
+}
+function enhanceScrapCost(it){
+  const enh = it.enh||0;
+  return 4 + (enh+1)*3;
 }
 
 function renderShop() {
@@ -907,13 +1200,23 @@ function renderShop() {
         <div class="btns"><button class="btnBuy">購買</button></div>
       `;
       card.querySelector(".btnBuy").addEventListener("click", ()=> buyShopEntry(entry));
-    } else {
+    } else if (entry.kind === "buy_box") {
       card.innerHTML = `
         <div class="top">
           <div class="name">${entry.label}</div>
           <div class="badge">${entry.price}G</div>
         </div>
-        <div class="desc">隨機掉落 1 件裝備（部位/稀有度隨機）。</div>
+        <div class="desc">隨機掉落 1 件裝備（含詞綴/稀有度）。</div>
+        <div class="btns"><button class="btnBuy">購買</button></div>
+      `;
+      card.querySelector(".btnBuy").addEventListener("click", ()=> buyShopEntry(entry));
+    } else if (entry.kind === "buy_scrap") {
+      card.innerHTML = `
+        <div class="top">
+          <div class="name">${entry.label}</div>
+          <div class="badge">${entry.price}G</div>
+        </div>
+        <div class="desc">獲得零件 +${entry.amount}</div>
         <div class="btns"><button class="btnBuy">購買</button></div>
       `;
       card.querySelector(".btnBuy").addEventListener("click", ()=> buyShopEntry(entry));
@@ -923,11 +1226,11 @@ function renderShop() {
   }
 }
 
-// ✅ 戰鬥紀錄：最新在最上面（由上往下看）
+// ✅ 戰鬥紀錄：最新在最上面
 function renderLog() {
   const wrap = el("log");
   wrap.innerHTML = S.battle.log.map(line => `<div>${escapeHtml(line)}</div>`).join("");
-  wrap.scrollTop = 0; // 固定在最上面
+  wrap.scrollTop = 0;
 }
 
 function renderChangelog() {
@@ -950,11 +1253,11 @@ function changelogLi(c) {
   return li;
 }
 
-// Log helpers — ✅ 最新放最上面：unshift
+// -------------------- UX helpers --------------------
 function log(msg) {
   const time = new Date().toLocaleTimeString("zh-TW", {hour:"2-digit", minute:"2-digit"});
   S.battle.log.unshift(`[${time}] ${msg}`);
-  if (S.battle.log.length > 180) S.battle.log.pop();
+  if (S.battle.log.length > 220) S.battle.log.pop();
   render();
 }
 function toast(msg) { log(`ℹ️ ${msg}`); }
@@ -977,7 +1280,6 @@ function formatEquipStats(st){
   if (st.hpMax) parts.push(`HP上限 +${st.hpMax}`);
   if (st.mpMax) parts.push(`MP上限 +${st.mpMax}`);
   if (st.cohMax) parts.push(`同心率上限 +${st.cohMax}`);
-  if (st.enMax) parts.push(`同心率上限 +${st.enMax}`); // 舊裝備兼容
   if (st.crit) parts.push(`暴擊 +${Math.round(st.crit*100)}%`);
   if (st.acc) parts.push(`命中 +${Math.round(st.acc*100)}%`);
   return parts.join(" / ");
@@ -1012,8 +1314,17 @@ function cryptoId(){
   if (crypto?.randomUUID) return crypto.randomUUID();
   return "id_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
+function weightedPick(arr){
+  const sum = arr.reduce((s,x)=>s+(x.w||1),0);
+  let r = Math.random()*sum;
+  for (const x of arr){
+    r -= (x.w||1);
+    if (r<=0) return x;
+  }
+  return arr[arr.length-1];
+}
 
-// Tabs
+// -------------------- Tabs --------------------
 function setTab(tabKey) {
   document.querySelectorAll(".tab").forEach(b=>{
     b.classList.toggle("active", b.dataset.tab === tabKey);
@@ -1023,7 +1334,6 @@ function setTab(tabKey) {
   });
   render();
 }
-
 function setSubtab(key){
   document.querySelectorAll(".subtab").forEach(b=>{
     b.classList.toggle("active", b.dataset.subtab === key);
@@ -1033,7 +1343,7 @@ function setSubtab(key){
   });
 }
 
-// DOM events
+// -------------------- DOM events --------------------
 window.addEventListener("DOMContentLoaded", ()=>{
   // main tabs
   document.querySelectorAll(".tab").forEach(btn=>{
@@ -1045,7 +1355,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     btn.addEventListener("click", ()=> setSubtab(btn.dataset.subtab));
   });
 
-  // ⚙️ settings modal
+  // settings modal
   el("btnOpenSettings").addEventListener("click", ()=> el("settingsModal").showModal());
   el("btnCloseSettings").addEventListener("click", ()=> el("settingsModal").close());
 
@@ -1083,7 +1393,15 @@ window.addEventListener("DOMContentLoaded", ()=>{
   el("btnCloseChangelog").addEventListener("click", ()=> el("changelogModal").close());
 
   // gameplay
-  el("btnRest").addEventListener("click", ()=> rest());
+  el("btnRest").addEventListener("click", ()=>{
+    const p = S.player;
+    applyDerivedMax();
+    p.hp = clamp(p.hp + Math.floor(p.hpMax * 0.25), 0, p.hpMax);
+    p.mp = clamp(p.mp + Math.floor(p.mpMax * 0.35), 0, p.mpMax);
+    p.coh = clamp(p.coh + Math.floor(p.cohMax * 0.35), 0, p.cohMax);
+    log(`維修完成：HP/MP/同心率回復（不超過最大值）`);
+    saveLocal(); render();
+  });
 
   el("btnExplore").addEventListener("click", ()=>{ exploreNext(); render(); });
   el("btnChallengeBoss").addEventListener("click", ()=>{ challengeBoss(); render(); });
@@ -1092,7 +1410,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
   el("btnAttack").addEventListener("click", ()=> attack("basic"));
   el("btnSkill").addEventListener("click", ()=> attack("skill"));
-  el("btnBurst").addEventListener("click", ()=> attack("burst"));
+  el("btnBurst").addEventListener("click", ()=> attack("burst")); // start burst state
 
   el("btnLootTest").addEventListener("click", ()=>{
     const drops = rollLoot(S.player.lv, "NORMAL");
@@ -1108,9 +1426,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const ra = a.type==="equip" ? (rank[a.rarity] ?? 0) : -1;
       const rb = b.type==="equip" ? (rank[b.rarity] ?? 0) : -1;
       if (rb !== ra) return rb - ra;
-      const pa = a.type==="equip" ? a.power : a.amount;
-      const pb = b.type==="equip" ? b.power : b.amount;
-      return pb - pa;
+      const ea = a.type==="equip" ? (a.enh||0) : 0;
+      const eb = b.type==="equip" ? (b.enh||0) : 0;
+      if (eb !== ea) return eb - ea;
+      const sa = a.type==="equip" ? scoreEquip(a) : a.amount;
+      const sb = b.type==="equip" ? scoreEquip(b) : b.amount;
+      return sb - sa;
     });
     toast("已整理背包");
     saveLocal();
@@ -1132,7 +1453,6 @@ window.addEventListener("DOMContentLoaded", ()=>{
     if (S.battle.enemy) attack("basic");
   }, 950);
 
-  // ensure version
   S.meta.version = VERSION;
   saveLocal();
   render();
