@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Mecha RPG - V0.0.3</title>
+  <title>Mecha RPG - V0.0.4</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,23 +11,22 @@
     <div class="brand">
       <div class="title">MECHA RPG</div>
       <div class="sub">
-        <span id="versionText">V0.0.3</span>
+        <span id="versionText">V0.0.4</span>
         <span class="dot">•</span>
         <button id="btnShowChangelog" class="linkbtn">版本更新</button>
       </div>
-      <div class="tabs">
-        <button class="tab active" data-tab="play">探索</button>
-        <button class="tab" data-tab="shop">商店</button>
-      </div>
     </div>
 
-    <div class="actions">
-      <button id="btnSave">儲存</button>
-      <button id="btnLoad">讀檔</button>
-      <button id="btnExportJson">匯出 JSON</button>
-      <button id="btnExportB64">匯出 Base64</button>
-      <button id="btnImport">匯入</button>
-      <button id="btnHardReset" class="danger">重置</button>
+    <nav class="tabs" aria-label="主選單">
+      <button class="tab active" data-tab="play">探索</button>
+      <button class="tab" data-tab="shop">商店</button>
+    </nav>
+
+    <div class="top-right">
+      <button id="btnOpenSettings" class="gear" title="設定 / 存檔">
+        <span class="gear-ico" aria-hidden="true">⚙️</span>
+        <span class="gear-text">設定</span>
+      </button>
     </div>
   </header>
 
@@ -45,19 +44,19 @@
         <div class="bars">
           <div class="bar">
             <div class="bar-label">HP <span id="hpText"></span></div>
-            <div class="bar-track"><div id="hpBar" class="bar-fill"></div></div>
+            <div class="bar-track"><div id="hpBar" class="bar-fill hp"></div></div>
           </div>
           <div class="bar">
             <div class="bar-label">MP <span id="mpText"></span></div>
-            <div class="bar-track"><div id="mpBar" class="bar-fill"></div></div>
+            <div class="bar-track"><div id="mpBar" class="bar-fill mp"></div></div>
           </div>
           <div class="bar">
             <div class="bar-label">能量 <span id="enText"></span></div>
-            <div class="bar-track"><div id="enBar" class="bar-fill"></div></div>
+            <div class="bar-track"><div id="enBar" class="bar-fill en"></div></div>
           </div>
           <div class="bar">
             <div class="bar-label">同步率(EXE) <span id="exeText"></span></div>
-            <div class="bar-track"><div id="exeBar" class="bar-fill"></div></div>
+            <div class="bar-track"><div id="exeBar" class="bar-fill exe"></div></div>
           </div>
         </div>
 
@@ -114,7 +113,7 @@
             <div>等級</div><div id="enemyLv">—</div>
             <div>HP</div><div id="enemyHpText">—</div>
           </div>
-          <div class="bar-track"><div id="enemyHpBar" class="bar-fill"></div></div>
+          <div class="bar-track"><div id="enemyHpBar" class="bar-fill hp"></div></div>
         </div>
 
         <div class="row">
@@ -159,6 +158,25 @@
       </section>
     </main>
   </div>
+
+  <!-- Settings Modal (⚙️) -->
+  <dialog id="settingsModal" class="modal">
+    <div class="modal-head">
+      <div class="modal-title">設定 / 存檔</div>
+      <button id="btnCloseSettings" class="linkbtn">關閉</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-grid">
+        <button id="btnSave">儲存</button>
+        <button id="btnLoad">讀檔</button>
+        <button id="btnExportJson">匯出 JSON</button>
+        <button id="btnExportB64">匯出 Base64</button>
+        <button id="btnImport">匯入</button>
+        <button id="btnHardReset" class="danger">重置</button>
+      </div>
+      <div class="hint">提示：匯出會複製到剪貼簿；匯入會覆蓋目前進度。</div>
+    </div>
+  </dialog>
 
   <!-- Changelog Modal -->
   <dialog id="changelogModal" class="modal">
