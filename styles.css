@@ -226,3 +226,8 @@ textarea{
 @media (max-width: 520px){
   .settings-grid{grid-template-columns:1fr}
 }
+/* V0.0.6 additions */
+.bar-fill.map{
+  background: linear-gradient(90deg, rgba(255,220,120,.95), rgba(255,220,120,.55));
+}
+.mapbar{margin-top:12px}
