@@ -1,8 +1,8 @@
 // =====================
-// Mecha RPG V0.0.2 (Playable)
+// Mecha RPG V0.0.3 — Tower Explore (1~10F) + Responsive UI
 // =====================
 
-const VERSION = "V0.0.2";
+const VERSION = "V0.0.3";
 
 // V0.0.9 -> V0.1.0 規則（PATCH 0~9，超過進位 MINOR）
 function bumpVersion(ver) {
@@ -16,12 +16,21 @@ function bumpVersion(ver) {
 // ---- Changelog ----
 const CHANGELOG = [
   {
+    version: "V0.0.3",
+    date: "2026-01-08",
+    notes: [
+      "加入探索模式：1~10層（一般/菁英/Mini Boss/Boss）分層怪物池",
+      "Boss 戰利品箱：保底裝備 + 高機率消耗品，推層更有目標",
+      "版面自適應直/橫式；內容最大寬度、卡片與log高度更舒服"
+    ]
+  },
+  {
     version: "V0.0.2",
     date: "2026-01-08",
     notes: [
       "補齊可玩循環：掉寶、消耗品使用、商店、裝備影響最大值",
       "背包物品增加「使用/裝備/丟棄」，裝備欄可一鍵換最強",
-      "新增分頁：作戰/商店；介面同步顯示金幣/等級/存檔版本"
+      "新增分頁：探索/商店；介面同步顯示金幣/等級/存檔版本"
     ]
   },
   {
@@ -47,13 +56,79 @@ const EQUIP_SLOTS = [
 ];
 
 const RARITY = [
-  { key: "N",  name: "一般",   mult: 1.0,  color: "" },
-  { key: "R",  name: "稀有",   mult: 1.25, color: "" },
-  { key: "SR", name: "超稀有", mult: 1.55, color: "" },
-  { key: "UR", name: "究極",   mult: 1.95, color: "" },
+  { key: "N",  name: "一般",   mult: 1.0 },
+  { key: "R",  name: "稀有",   mult: 1.25 },
+  { key: "SR", name: "超稀有", mult: 1.55 },
+  { key: "UR", name: "究極",   mult: 1.95 },
 ];
 
 const LS_KEY = "mecha_rpg_save";
+
+// ---------------------
+// Tower / Encounter tables
+// ---------------------
+const TOWER_MAX_FLOOR = 10;
+
+/**
+ * 每層流程（簡單可玩版）：
+ * - 一般遭遇：需要打 3 場
+ * - 中途會有 30% 機率插入 1 場菁英（最多一次）
+ * - 一般完成後：需要打 1 場 Mini Boss
+ * - 之後可挑戰 Boss（本層通關）
+ */
+function defaultFloorPlan() {
+  return {
+    normalsDone: 0,
+    normalNeed: 3,
+    eliteDone: false,
+    miniBossDone: false,
+    bossDone: false,
+    // 下一個 encounter hint
+    lastEncounter: null,
+  };
+}
+
+function floorEnemyPool(floor) {
+  // 分層怪物池（一般/菁英/mini/boss）
+  // 你之後要更細（每層10隻一般、4隻菁英等）可以在這裡擴展成更大清單
+  const base = floor * 2;
+
+  const normal = [
+    { name: "巡弋偵察蜂群", atkK: 7.6, defK: 4.5, lvBias: 0 },
+    { name: "破片火力單元", atkK: 8.0, defK: 4.8, lvBias: 0 },
+    { name: "舊型自律守衛", atkK: 8.2, defK: 5.0, lvBias: 1 },
+    { name: "脈衝干擾器",   atkK: 7.9, defK: 4.7, lvBias: -1 },
+    { name: "沙塵追獵者",   atkK: 8.4, defK: 5.1, lvBias: 1 },
+  ];
+
+  const elite = [
+    { name: "菁英・鋼甲破城者", atkK: 9.4, defK: 6.4, lvBias: 2 },
+    { name: "菁英・高機動獵犬", atkK: 9.8, defK: 6.0, lvBias: 2 },
+    { name: "菁英・電弧斬切者", atkK: 10.2, defK: 6.2, lvBias: 3 },
+  ];
+
+  const mini = [
+    { name: "Mini Boss・暴走核心體", atkK: 10.8, defK: 7.0, lvBias: 3 },
+    { name: "Mini Boss・重盾堡壘",   atkK: 10.0, defK: 7.8, lvBias: 3 },
+  ];
+
+  const boss = [
+    { name: `Boss・第${floor}層 機神「裂空」`, atkK: 12.2, defK: 8.6, lvBias: 5, boss: true },
+    { name: `Boss・第${floor}層 終端核心「審判」`, atkK: 12.8, defK: 8.2, lvBias: 5, boss: true },
+  ];
+
+  return { normal, elite, mini, boss, base };
+}
+
+function nextEncounterTypeForFloorState(fs) {
+  if (fs.bossDone) return "CLEARED";
+  if (!fs.miniBossDone) {
+    // normals + (optional elite)
+    if (fs.normalsDone < fs.normalNeed) return "NORMAL";
+    return "MINI";
+  }
+  return "BOSS_READY";
+}
 
 // ---------------------
 // State
@@ -81,8 +156,13 @@ function newGameState() {
         mkConsumable("資料注入針", "gain_exe", 15, 25),
       ],
     },
+    tower: {
+      floor: 1,
+      floorState: defaultFloorPlan(),
+    },
     battle: {
       enemy: null,
+      enemyType: null, // NORMAL/ELITE/MINI/BOSS
       auto: false,
       log: [],
     }
@@ -93,22 +173,23 @@ let S = loadOrInit();
 migrateIfNeeded();
 
 // ---------------------
-// Migration / Compatibility
+// Migration
 // ---------------------
 function migrateIfNeeded() {
-  // 舊存檔欄位補齊
   if (!S.meta) S.meta = { version: VERSION, createdAt: Date.now(), updatedAt: Date.now() };
   if (!S.meta.version) S.meta.version = VERSION;
 
   if (!S.player) S.player = newGameState().player;
   if (!S.player.equips) S.player.equips = Object.fromEntries(EQUIP_SLOTS.map(s => [s.key, null]));
-  for (const s of EQUIP_SLOTS) {
-    if (!(s.key in S.player.equips)) S.player.equips[s.key] = null;
-  }
+  for (const s of EQUIP_SLOTS) if (!(s.key in S.player.equips)) S.player.equips[s.key] = null;
   if (!Array.isArray(S.player.bag)) S.player.bag = [];
+
   if (!S.battle) S.battle = newGameState().battle;
 
-  // 立刻套用裝備最大值修正
+  if (!S.tower) S.tower = newGameState().tower;
+  if (!S.tower.floor) S.tower.floor = 1;
+  if (!S.tower.floorState) S.tower.floorState = defaultFloorPlan();
+
   applyDerivedMax();
 }
 
@@ -120,7 +201,6 @@ function saveLocal() {
   localStorage.setItem(LS_KEY, JSON.stringify(S));
   toast("已儲存到瀏覽器");
 }
-
 function loadLocal() {
   const raw = localStorage.getItem(LS_KEY);
   if (!raw) return false;
@@ -129,19 +209,12 @@ function loadLocal() {
     migrateIfNeeded();
     toast("已讀取存檔");
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
-
 function loadOrInit() {
   const raw = localStorage.getItem(LS_KEY);
   if (!raw) return newGameState();
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return newGameState();
-  }
+  try { return JSON.parse(raw); } catch { return newGameState(); }
 }
 
 // ---------------------
@@ -152,20 +225,16 @@ function exportJSON() {
   copyToClipboard(json);
   toast("JSON 已複製到剪貼簿");
 }
-
 function exportB64() {
   const json = JSON.stringify(S);
   const b64 = btoa(unescape(encodeURIComponent(json)));
   copyToClipboard(b64);
   toast("Base64 已複製到剪貼簿");
 }
-
 function importFromText(text) {
   const t = (text || "").trim();
   if (!t) throw new Error("空內容");
-
   if (t.startsWith("{") || t.startsWith("[")) return JSON.parse(t);
-
   const json = decodeURIComponent(escape(atob(t)));
   return JSON.parse(json);
 }
@@ -174,14 +243,11 @@ function importFromText(text) {
 // Mechanics
 // ---------------------
 function xpNeed(lv) {
-  // 可玩曲線：越高越難
   return Math.floor(120 + (lv - 1) * 70 + Math.pow(lv - 1, 1.35) * 25);
 }
-
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
 function applyDerivedMax() {
-  // 裝備可加最大值（hpMax/mpMax/enMax）
   const p = S.player;
   let hpBonus = 0, mpBonus = 0, enBonus = 0;
 
@@ -223,13 +289,11 @@ function calcTotalStats() {
     acc  += it.stats.acc || 0;
   }
 
-  // EXE 加成（小幅）
-  const exeBonus = (p.exe / 100) * 0.10; // +0~10% atk
+  const exeBonus = (p.exe / 100) * 0.10;
   atk = Math.floor(atk * (1 + exeBonus));
 
   crit = clamp(crit, 0, 0.40);
   acc  = clamp(acc, 0.65, 0.99);
-
   return { atk, def, crit, acc };
 }
 
@@ -241,39 +305,134 @@ function rest() {
   p.en = clamp(p.en + Math.floor(p.enMax * 0.35), 0, p.enMax);
   p.exe = clamp(p.exe - 5, 0, p.exeMax);
   log(`維修完成：HP/MP/能量回復（不超過最大值），EXE略降`);
+  saveLocal();
 }
 
-function spawnEnemy() {
+// ---------------------
+// Tower flow
+// ---------------------
+function canGoNextFloor() {
+  const fs = S.tower.floorState;
+  return fs.bossDone && S.tower.floor < TOWER_MAX_FLOOR;
+}
+
+function nextEncounterHint() {
+  const fs = S.tower.floorState;
+  const t = nextEncounterTypeForFloorState(fs);
+  if (t === "CLEARED") return "本層已通關";
+  if (t === "BOSS_READY") return "Boss（可挑戰）";
+  if (t === "MINI") return "Mini Boss";
+  // NORMAL：可能插入菁英
+  if (!fs.eliteDone && fs.normalsDone >= 1 && Math.random() < 0.30) return "可能出現 菁英";
+  return "一般怪";
+}
+
+function exploreNext() {
+  if (S.battle.enemy) { toast("正在戰鬥中"); return; }
+
+  const floor = S.tower.floor;
+  const fs = S.tower.floorState;
+  if (fs.bossDone) { toast("本層已通關，請前往下一層"); return; }
+
+  const planType = nextEncounterTypeForFloorState(fs);
+
+  if (planType === "MINI") {
+    spawnTowerEnemy("MINI");
+    return;
+  }
+
+  if (planType === "BOSS_READY") {
+    toast("本層已可挑戰 Boss（點『挑戰 Boss』）");
+    return;
+  }
+
+  // NORMAL：中途插入菁英（最多一次）
+  if (!fs.eliteDone && fs.normalsDone >= 1 && Math.random() < 0.30) {
+    fs.eliteDone = true;
+    spawnTowerEnemy("ELITE");
+    return;
+  }
+
+  spawnTowerEnemy("NORMAL");
+}
+
+function challengeBoss() {
+  if (S.battle.enemy) { toast("正在戰鬥中"); return; }
+  const fs = S.tower.floorState;
+  if (!fs.miniBossDone) { toast("還不能打Boss：先完成一般怪與Mini Boss"); return; }
+  if (fs.bossDone) { toast("本層Boss已擊敗"); return; }
+  spawnTowerEnemy("BOSS");
+}
+
+function goNextFloor() {
+  if (!canGoNextFloor()) { toast("需要先擊敗本層 Boss 才能前往下一層"); return; }
+  S.tower.floor += 1;
+  S.tower.floorState = defaultFloorPlan();
+  log(`➡️ 前往第 ${S.tower.floor} 層`);
+  saveLocal();
+  render();
+}
+
+function resetTower() {
+  S.tower.floor = 1;
+  S.tower.floorState = defaultFloorPlan();
+  S.battle.enemy = null;
+  S.battle.enemyType = null;
+  log("↩️ 回到第1層（重置探索進度）");
+  saveLocal();
+  render();
+}
+
+function spawnTowerEnemy(type) {
+  const floor = S.tower.floor;
+  const pool = floorEnemyPool(floor);
+
+  // 等級：以玩家等級 + floor base 修正
   const p = S.player;
-  const lv = clamp(p.lv + randInt(-1, +3), 1, 999);
-  const hpMax = Math.floor(90 + lv * 48);
-  const type = pick([
-    { name:"偵察型無人機",   atkK: 7.8, defK: 4.6 },
-    { name:"破城者機甲",     atkK: 8.6, defK: 5.8 },
-    { name:"沙漠獵犬",       atkK: 8.2, defK: 5.0 },
-    { name:"深海鋼鰭",       atkK: 8.8, defK: 5.2 },
-    { name:"失控核心體",     atkK: 9.2, defK: 6.2 },
-  ]);
+  const baseLv = Math.max(1, Math.floor(p.lv + pool.base / 2));
+
+  let tmpl;
+  if (type === "NORMAL") tmpl = pick(pool.normal);
+  if (type === "ELITE")  tmpl = pick(pool.elite);
+  if (type === "MINI")   tmpl = pick(pool.mini);
+  if (type === "BOSS")   tmpl = pick(pool.boss);
+
+  const lv = clamp(baseLv + (tmpl.lvBias || 0) + randInt(-1, +1), 1, 999);
+
+  const hpMaxBase = 90 + lv * 48;
+  const hpMult = type === "BOSS" ? 1.55 : type === "MINI" ? 1.25 : type === "ELITE" ? 1.15 : 1.0;
+  const hpMax = Math.floor(hpMaxBase * hpMult);
+
+  const atkMult = type === "BOSS" ? 1.20 : type === "MINI" ? 1.12 : type === "ELITE" ? 1.08 : 1.0;
+  const defMult = type === "BOSS" ? 1.22 : type === "MINI" ? 1.14 : type === "ELITE" ? 1.10 : 1.0;
+
   S.battle.enemy = {
-    name: type.name,
+    name: tmpl.name,
     lv,
     hp: hpMax,
     hpMax,
-    atk: Math.floor(6 + lv * type.atkK),
-    def: Math.floor(2 + lv * type.defK),
+    atk: Math.floor((6 + lv * tmpl.atkK) * atkMult),
+    def: Math.floor((2 + lv * tmpl.defK) * defMult),
+    boss: !!tmpl.boss,
   };
-  log(`遭遇敵人：${S.battle.enemy.name} Lv.${lv}`);
+  S.battle.enemyType = type;
+
+  S.tower.floorState.lastEncounter = type;
+  log(`🛰️ 探索遭遇：${labelEncounter(type)}｜${S.battle.enemy.name} Lv.${lv}`);
+  render();
 }
 
+// ---------------------
+// Combat
+// ---------------------
 function attack(kind="basic") {
   const p = S.player;
   const e = S.battle.enemy;
-  if (!e) { toast("沒有敵人，先點『遭遇敵人』"); return; }
+  if (!e) { toast("沒有敵人，請先探索"); return; }
 
   applyDerivedMax();
   const st = calcTotalStats();
 
-  // costs
   if (kind === "skill") {
     if (p.mp < 12) { toast("MP 不足"); return; }
     p.mp -= 12;
@@ -294,7 +453,6 @@ function attack(kind="basic") {
   if (kind === "skill") mult = 1.40;
   if (kind === "exe")   mult = 2.15;
 
-  // crit
   const isCrit = Math.random() < st.crit;
   const critMult = isCrit ? 1.65 : 1.0;
 
@@ -303,7 +461,6 @@ function attack(kind="basic") {
 
   e.hp = clamp(e.hp - dmg, 0, e.hpMax);
 
-  // resource flows
   p.en  = clamp(p.en + 3, 0, p.enMax);
   p.exe = clamp(p.exe + (kind==="exe" ? 0 : 3), 0, p.exeMax);
   if (kind === "skill") p.exe = clamp(p.exe + 5, 0, p.exeMax);
@@ -340,33 +497,58 @@ function enemyTurn() {
     p.gold = Math.max(0, p.gold - 25);
     p.exe = 0;
     S.battle.enemy = null;
+    S.battle.enemyType = null;
+    saveLocal();
+    render();
   }
 }
 
 function winBattle() {
   const p = S.player;
   const e = S.battle.enemy;
+  const et = S.battle.enemyType || "NORMAL";
 
-  const gainXP   = Math.floor(55 + e.lv * 28);
-  const gainGold = Math.floor(15 + e.lv * 9);
+  const gainXP   = Math.floor(55 + e.lv * 28) * xpMultByEncounter(et);
+  const gainGold = Math.floor(15 + e.lv * 9)  * goldMultByEncounter(et);
 
   p.xp += gainXP;
   p.gold += gainGold;
   p.exe = clamp(p.exe + 10, 0, p.exeMax);
 
-  log(`✅ 擊敗 ${e.name}！獲得 EXP+${gainXP}、金幣+${gainGold}、EXE+10`);
+  log(`✅ 擊敗 ${e.name}（${labelEncounter(et)}）！EXP+${gainXP} 金幣+${gainGold} EXE+10`);
 
-  const drops = rollLoot(e.lv);
+  const drops = rollLoot(e.lv, et);
   for (const it of drops) p.bag.push(it);
 
   if (drops.length) log(`🎁 掉落：${drops.map(x => x.name).join("、")}`);
   else log("掉落：無");
 
-  S.battle.enemy = null;
-  levelUpIfNeeded();
+  // update tower progress
+  const fs = S.tower.floorState;
+  if (et === "NORMAL") fs.normalsDone += 1;
+  if (et === "ELITE")  fs.eliteDone = true;
+  if (et === "MINI")   fs.miniBossDone = true;
+  if (et === "BOSS")   fs.bossDone = true;
 
-  // 自動存檔（防止玩家忘記）
+  S.battle.enemy = null;
+  S.battle.enemyType = null;
+
+  levelUpIfNeeded();
   saveLocal();
+  render();
+}
+
+function xpMultByEncounter(et){
+  if (et==="BOSS") return 2.2;
+  if (et==="MINI") return 1.6;
+  if (et==="ELITE") return 1.35;
+  return 1.0;
+}
+function goldMultByEncounter(et){
+  if (et==="BOSS") return 2.0;
+  if (et==="MINI") return 1.5;
+  if (et==="ELITE") return 1.25;
+  return 1.0;
 }
 
 function levelUpIfNeeded() {
@@ -376,7 +558,6 @@ function levelUpIfNeeded() {
     p.xp -= need;
     p.lv += 1;
     applyDerivedMax();
-    // 升級全滿
     p.hp = p.hpMax;
     p.mp = p.mpMax;
     p.en = p.enMax;
@@ -388,15 +569,39 @@ function levelUpIfNeeded() {
 // ---------------------
 // Loot & Items
 // ---------------------
-function rollLoot(enemyLv) {
+function rollLoot(enemyLv, encounterType="NORMAL") {
   const out = [];
-  // 裝備：60% 1件，12% 2件
-  const roll = Math.random();
-  const equipCount = roll < 0.12 ? 2 : (roll < 0.72 ? 1 : 0);
-  for (let i=0;i<equipCount;i++) out.push(genEquip(enemyLv));
 
-  // 消耗品：35%
-  if (Math.random() < 0.35) out.push(genConsumable(enemyLv));
+  // 裝備掉落基礎
+  let equipChance = 0.70;
+  let equipMin = 0, equipMax = 1;
+
+  if (encounterType === "ELITE") { equipChance = 0.85; equipMax = 2; }
+  if (encounterType === "MINI")  { equipChance = 1.00; equipMin = 1; equipMax = 2; }
+  if (encounterType === "BOSS")  { equipChance = 1.00; equipMin = 1; equipMax = 3; }
+
+  const equipCount =
+    encounterType === "BOSS"
+      ? randInt(1, 2) // Boss再加上Boss箱
+      : (Math.random() < equipChance ? randInt(equipMin, equipMax) : 0);
+
+  for (let i=0;i<equipCount;i++) out.push(genEquip(enemyLv, encounterType));
+
+  // 消耗品
+  const consChance =
+    encounterType==="BOSS" ? 0.85 :
+    encounterType==="MINI" ? 0.65 :
+    encounterType==="ELITE"? 0.50 : 0.35;
+
+  if (Math.random() < consChance) out.push(genConsumable(enemyLv));
+
+  // Boss 戰利品箱（直接發內容，避免做箱子物件）
+  if (encounterType === "BOSS") {
+    log("📦 Boss 戰利品箱已開啟！");
+    out.push(genEquip(enemyLv + 2, "BOSS"));
+    if (Math.random() < 0.70) out.push(genConsumable(enemyLv + 2));
+  }
+
   return out;
 }
 
@@ -418,15 +623,15 @@ function mkConsumable(name, kind, amount, price) {
     id: cryptoId(),
     type: "consumable",
     name,
-    kind,     // heal_hp / heal_mp / heal_en / gain_exe
+    kind,
     amount,
     price,
   };
 }
 
-function genEquip(lv) {
+function genEquip(lv, encounterType="NORMAL") {
   const slot = pick(EQUIP_SLOTS);
-  const r = rollRarity();
+  const r = rollRarity(encounterType);
   const power = Math.max(1, Math.floor((lv * 2 + randInt(0, lv+4)) * r.mult));
 
   const stats = baseStatsBySlot(slot.key, power);
@@ -442,10 +647,24 @@ function genEquip(lv) {
   };
 }
 
-function baseStatsBySlot(slotKey, power){
-  // 讓裝備「可玩」：攻防 + 少量最大值 + 少量暴擊命中
-  const s = { atk:0, def:0, crit:0, acc:0, hpMax:0, mpMax:0, enMax:0 };
+function rollRarity(encounterType="NORMAL") {
+  // Boss/mini 稍微提高稀有
+  const x = Math.random();
+  const bonus =
+    encounterType==="BOSS" ? -0.07 :
+    encounterType==="MINI" ? -0.04 :
+    encounterType==="ELITE"? -0.02 : 0;
 
+  const y = clamp(x + bonus, 0, 1);
+
+  if (y < 0.62) return RARITY[0];
+  if (y < 0.85) return RARITY[1];
+  if (y < 0.96) return RARITY[2];
+  return RARITY[3];
+}
+
+function baseStatsBySlot(slotKey, power){
+  const s = { atk:0, def:0, crit:0, acc:0, hpMax:0, mpMax:0, enMax:0 };
   const small = (x)=> Math.max(0, Math.floor(x));
   const tinyP = power / 6000;
 
@@ -463,7 +682,6 @@ function baseStatsBySlot(slotKey, power){
     s.def = Math.floor(power * 1.10);
     s.enMax = small(power * 0.12);
   } else {
-    // accessories
     if (Math.random() < 0.5) s.atk = Math.floor(power * 0.65);
     else s.def = Math.floor(power * 0.65);
     if (Math.random() < 0.25) s.crit = round4(tinyP * 1.2);
@@ -472,18 +690,9 @@ function baseStatsBySlot(slotKey, power){
     if (Math.random() < 0.20) s.enMax = small(power * 0.10);
   }
 
-  // 限制 crit/acc 避免爆掉
   s.crit = clamp(s.crit, 0, 0.08);
   s.acc  = clamp(s.acc,  0, 0.06);
   return s;
-}
-
-function rollRarity() {
-  const x = Math.random();
-  if (x < 0.64) return RARITY[0];
-  if (x < 0.87) return RARITY[1];
-  if (x < 0.97) return RARITY[2];
-  return RARITY[3];
 }
 
 // ---------------------
@@ -544,7 +753,6 @@ function useBestPotionAuto() {
   const p = S.player;
   applyDerivedMax();
 
-  // 按缺口挑最佳（先補HP，再MP，再能量）
   const hpNeed = p.hpMax - p.hp;
   const mpNeed = p.mpMax - p.mp;
   const enNeed = p.enMax - p.en;
@@ -567,7 +775,6 @@ function getShopList() {
   const p = S.player;
   const lv = p.lv;
 
-  // 價格/數值隨等級變動（簡單）
   const potSmall = mkConsumable("小型修復包", "heal_hp", 45 + lv*4, 35 + lv*3);
   const potMp    = mkConsumable("MP 注入劑", "heal_mp", 28 + lv*3, 40 + lv*3);
   const potEn    = mkConsumable("能量電池", "heal_en", 26 + lv*3, 28 + lv*2);
@@ -596,7 +803,7 @@ function buyShopEntry(entry) {
   if (entry.kind === "buy_box") {
     if (p.gold < entry.price) { toast("金幣不足"); return; }
     p.gold -= entry.price;
-    const eq = genEquip(p.lv);
+    const eq = genEquip(p.lv, "NORMAL");
     p.bag.push(eq);
     log(`購買：裝備箱，獲得 ${eq.name}`);
     saveLocal();
@@ -610,10 +817,8 @@ function buyShopEntry(entry) {
 const el = (id)=>document.getElementById(id);
 
 function render() {
-  // version
   el("versionText").textContent = S.meta.version || VERSION;
 
-  // numbers
   const p = S.player;
   applyDerivedMax();
 
@@ -622,13 +827,11 @@ function render() {
   el("xpNeed").textContent = xpNeed(p.lv);
   el("gold").textContent = p.gold;
 
-  // shop side quick info
-  const g2 = document.getElementById("gold2");
-  const lv2 = document.getElementById("lv2");
-  const sv = document.getElementById("saveVer");
-  if (g2) g2.textContent = p.gold;
-  if (lv2) lv2.textContent = p.lv;
-  if (sv) sv.textContent = S.meta.version || VERSION;
+  // shop quick
+  el("gold2").textContent = p.gold;
+  el("lv2").textContent = p.lv;
+  el("saveVer").textContent = S.meta.version || VERSION;
+  el("floor2").textContent = S.tower.floor;
 
   setBar("hp", p.hp, p.hpMax);
   setBar("mp", p.mp, p.mpMax);
@@ -641,12 +844,40 @@ function render() {
   el("crit").textContent = Math.round(st.crit*100) + "%";
   el("acc").textContent = Math.round(st.acc*100) + "%";
 
+  // tower
+  el("floor").textContent = S.tower.floor;
+  renderFloorInfo();
+
   renderEquip();
   renderEnemy();
   renderBag();
   renderLog();
   renderChangelog();
   renderShop();
+}
+
+function renderFloorInfo() {
+  const fs = S.tower.floorState;
+  const floor = S.tower.floor;
+
+  const normalLine = `一般 ${fs.normalsDone}/${fs.normalNeed}`;
+  const eliteLine  = `菁英 ${fs.eliteDone ? "✓" : "—"}`;
+  const miniLine   = `MiniBoss ${fs.miniBossDone ? "✓" : "—"}`;
+  const bossLine   = `Boss ${fs.bossDone ? "✓" : "—"}`;
+
+  el("floorProgress").textContent = `${normalLine}｜${eliteLine}｜${miniLine}｜${bossLine}`;
+  el("nextEncounter").textContent = nextEncounterHint();
+
+  // buttons enable/disable
+  const btnBoss = el("btnChallengeBoss");
+  const btnNext = el("btnNextFloor");
+  btnBoss.disabled = !fs.miniBossDone || fs.bossDone || !!S.battle.enemy;
+  btnNext.disabled = !canGoNextFloor() || !!S.battle.enemy;
+
+  // if last floor and cleared
+  if (floor >= TOWER_MAX_FLOOR && fs.bossDone) {
+    btnNext.disabled = true;
+  }
 }
 
 function setBar(prefix, cur, max) {
@@ -683,7 +914,7 @@ function renderEnemy() {
     el("enemyHpBar").style.width = `0%`;
     return;
   }
-  el("enemyName").textContent = e.name;
+  el("enemyName").textContent = `${labelEncounter(S.battle.enemyType)}｜${e.name}`;
   el("enemyLv").textContent = e.lv;
   el("enemyHpText").textContent = `${e.hp} / ${e.hpMax}`;
   el("enemyHpBar").style.width = `${(e.hp/e.hpMax)*100}%`;
@@ -695,7 +926,7 @@ function renderBag() {
   const bag = S.player.bag;
 
   if (!bag.length) {
-    wrap.innerHTML = `<div class="hint">背包空空的。去打怪或去商店買東西吧！</div>`;
+    wrap.innerHTML = `<div class="hint">背包空空的。推層或去商店補貨吧！</div>`;
     return;
   }
 
@@ -723,14 +954,8 @@ function renderBag() {
         </div>
       `;
 
-      d.querySelector(".btnEquip").addEventListener("click", ()=>{
-        equipItemById(it.id);
-        render();
-      });
-      d.querySelector(".btnDrop").addEventListener("click", ()=>{
-        dropItem(it.id);
-        render();
-      });
+      d.querySelector(".btnEquip").addEventListener("click", ()=>{ equipItemById(it.id); render(); });
+      d.querySelector(".btnDrop").addEventListener("click", ()=>{ dropItem(it.id); render(); });
 
     } else {
       d.innerHTML = `
@@ -738,22 +963,14 @@ function renderBag() {
           <div class="name">${it.name}</div>
           <div class="badge">消耗品 • ${it.price}G</div>
         </div>
-        <div class="desc">
-          效果：${consumableDesc(it)}
-        </div>
+        <div class="desc">效果：${consumableDesc(it)}</div>
         <div class="btns">
           <button class="btnUse">使用</button>
           <button class="danger btnDrop">丟棄</button>
         </div>
       `;
-      d.querySelector(".btnUse").addEventListener("click", ()=>{
-        useConsumable(it.id);
-        render();
-      });
-      d.querySelector(".btnDrop").addEventListener("click", ()=>{
-        dropItem(it.id);
-        render();
-      });
+      d.querySelector(".btnUse").addEventListener("click", ()=>{ useConsumable(it.id); render(); });
+      d.querySelector(".btnDrop").addEventListener("click", ()=>{ dropItem(it.id); render(); });
     }
 
     wrap.appendChild(d);
@@ -761,7 +978,7 @@ function renderBag() {
 }
 
 function renderShop() {
-  const wrap = document.getElementById("shop");
+  const wrap = el("shop");
   if (!wrap) return;
 
   const list = getShopList();
@@ -778,29 +995,19 @@ function renderShop() {
           <div class="badge">${entry.item.price}G</div>
         </div>
         <div class="desc">${entry.label}<br/>效果：${consumableDesc(entry.item)}</div>
-        <div class="btns">
-          <button class="btnBuy">購買</button>
-        </div>
+        <div class="btns"><button class="btnBuy">購買</button></div>
       `;
-      card.querySelector(".btnBuy").addEventListener("click", ()=>{
-        buyShopEntry(entry);
-        render();
-      });
+      card.querySelector(".btnBuy").addEventListener("click", ()=>{ buyShopEntry(entry); render(); });
     } else {
       card.innerHTML = `
         <div class="top">
           <div class="name">${entry.label}</div>
           <div class="badge">${entry.price}G</div>
         </div>
-        <div class="desc">隨機掉落 1 件裝備（部位隨機、稀有度隨機）。</div>
-        <div class="btns">
-          <button class="btnBuy">購買</button>
-        </div>
+        <div class="desc">隨機掉落 1 件裝備（部位/稀有度隨機）。</div>
+        <div class="btns"><button class="btnBuy">購買</button></div>
       `;
-      card.querySelector(".btnBuy").addEventListener("click", ()=>{
-        buyShopEntry(entry);
-        render();
-      });
+      card.querySelector(".btnBuy").addEventListener("click", ()=>{ buyShopEntry(entry); render(); });
     }
 
     wrap.appendChild(card);
@@ -834,24 +1041,19 @@ function changelogLi(c) {
 }
 
 // ---------------------
-// Logging & helpers
+// Helpers
 // ---------------------
 function log(msg) {
   const time = new Date().toLocaleTimeString("zh-TW", {hour:"2-digit", minute:"2-digit"});
   S.battle.log.push(`[${time}] ${msg}`);
-  if (S.battle.log.length > 140) S.battle.log.shift();
+  if (S.battle.log.length > 160) S.battle.log.shift();
   render();
 }
-
-function toast(msg) {
-  // V0.0.2：簡化為 log（避免一直跳 alert）
-  log(`ℹ️ ${msg}`);
-}
+function toast(msg) { log(`ℹ️ ${msg}`); }
 
 function copyToClipboard(text) {
   navigator.clipboard?.writeText(text).catch(()=>{});
 }
-
 function escapeHtml(s){
   return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
 }
@@ -869,7 +1071,6 @@ function formatEquipStats(st){
 }
 
 function compareEquip(newEq, curEq) {
-  // 顯示差異（新 - 舊）
   const keys = ["atk","def","hpMax","mpMax","enMax","crit","acc"];
   const lines = [];
   for (const k of keys) {
@@ -886,7 +1087,6 @@ function compareEquip(newEq, curEq) {
   }
   return lines.join("<br/>") || "（差異極小）";
 }
-
 function keyCN(k){
   if (k==="atk") return "攻擊";
   if (k==="def") return "防禦";
@@ -895,7 +1095,6 @@ function keyCN(k){
   if (k==="enMax") return "能量上限";
   return k;
 }
-
 function consumableDesc(it){
   if (it.kind==="heal_hp") return `HP +${it.amount}`;
   if (it.kind==="heal_mp") return `MP +${it.amount}`;
@@ -904,12 +1103,16 @@ function consumableDesc(it){
   return `+${it.amount}`;
 }
 
-function slotName(k){
-  return (EQUIP_SLOTS.find(x=>x.key===k)?.label) || k;
+function slotName(k){ return (EQUIP_SLOTS.find(x=>x.key===k)?.label) || k; }
+function rarityName(rk){ return (RARITY.find(x=>x.key===rk)?.name) || rk; }
+
+function labelEncounter(t){
+  if (t==="BOSS") return "BOSS";
+  if (t==="MINI") return "MINI";
+  if (t==="ELITE") return "菁英";
+  return "一般";
 }
-function rarityName(rk){
-  return (RARITY.find(x=>x.key===rk)?.name) || rk;
-}
+
 function kindName(k){
   if (k==="basic") return "一般攻擊";
   if (k==="skill") return "技能";
@@ -947,6 +1150,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     btn.addEventListener("click", ()=> setTab(btn.dataset.tab));
   });
 
+  // top actions
   el("btnSave").addEventListener("click", saveLocal);
   el("btnLoad").addEventListener("click", ()=>{ if(!loadLocal()) toast("沒有存檔"); render(); });
 
@@ -976,15 +1180,20 @@ window.addEventListener("DOMContentLoaded", ()=>{
     render();
   });
 
-  el("btnRest").addEventListener("click", ()=>{ rest(); saveLocal(); render(); });
+  // gameplay
+  el("btnRest").addEventListener("click", ()=>{ rest(); });
 
-  el("btnSpawn").addEventListener("click", ()=>{ spawnEnemy(); render(); });
+  el("btnExplore").addEventListener("click", ()=>{ exploreNext(); render(); });
+  el("btnChallengeBoss").addEventListener("click", ()=>{ challengeBoss(); render(); });
+  el("btnNextFloor").addEventListener("click", ()=>{ goNextFloor(); });
+  el("btnResetTower").addEventListener("click", ()=>{ resetTower(); });
+
   el("btnAttack").addEventListener("click", ()=> attack("basic"));
   el("btnSkill").addEventListener("click", ()=> attack("skill"));
   el("btnExe").addEventListener("click", ()=> attack("exe"));
 
   el("btnLootTest").addEventListener("click", ()=>{
-    const drops = rollLoot(S.player.lv);
+    const drops = rollLoot(S.player.lv, "NORMAL");
     for (const it of drops) S.player.bag.push(it);
     log(`測試掉寶：${drops.length ? drops.map(x=>x.name).join("、") : "無"}`);
     saveLocal();
@@ -997,7 +1206,6 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const ra = a.type==="equip" ? (rank[a.rarity] ?? 0) : -1;
       const rb = b.type==="equip" ? (rank[b.rarity] ?? 0) : -1;
       if (rb !== ra) return rb - ra;
-
       const pa = a.type==="equip" ? a.power : a.amount;
       const pb = b.type==="equip" ? b.power : b.amount;
       return pb - pa;
@@ -1007,29 +1215,26 @@ window.addEventListener("DOMContentLoaded", ()=>{
     render();
   });
 
-  el("btnUseBestPotion").addEventListener("click", ()=>{
-    useBestPotionAuto();
-    render();
-  });
+  el("btnUseBestPotion").addEventListener("click", ()=>{ useBestPotionAuto(); render(); });
 
+  // changelog
   el("btnShowChangelog").addEventListener("click", ()=> el("changelogModal").showModal());
   el("btnCloseChangelog").addEventListener("click", ()=> el("changelogModal").close());
 
+  // auto battle
   el("btnToggleAuto").addEventListener("click", ()=>{
     S.battle.auto = !S.battle.auto;
     el("btnToggleAuto").textContent = `自動戰鬥：${S.battle.auto ? "開" : "關"}`;
     saveLocal();
   });
 
-  // Auto battle tick (safe)
   setInterval(()=>{
     if (!S.battle.auto) return;
-    // 如果正在看商店，也照樣跑（可關掉）
-    if (!S.battle.enemy) spawnEnemy();
-    attack("basic");
+    if (!S.battle.enemy) exploreNext();
+    if (S.battle.enemy) attack("basic");
   }, 950);
 
-  // ensure version
+  // set version
   S.meta.version = VERSION;
   saveLocal();
   render();
